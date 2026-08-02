@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS users (
     email           TEXT NOT NULL UNIQUE,
     password_hash   TEXT NOT NULL,
     telegram_id     TEXT,
+    verified        INTEGER NOT NULL DEFAULT 1,
+    trial_started_at TEXT,
+    trial_expires_at TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -51,6 +54,19 @@ async def init_db():
             pass
         try:
             await db.execute("ALTER TABLE orders ADD COLUMN user_id TEXT")
+        except Exception:
+            pass
+        # Миграция: users — verified, trial
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN trial_started_at TEXT")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN trial_expires_at TEXT")
         except Exception:
             pass
         # Индексы для частых запросов
@@ -159,13 +175,36 @@ async def get_user_by_id(user_id: str) -> dict | None:
         return dict(row) if row else None
 
 
-async def create_user(user_id: str, email: str, password_hash: str):
+async def create_user(user_id: str, email: str, password_hash: str, verified: int = 1):
     async with aiosqlite.connect(settings.database_path) as db:
         await db.execute(
-            "INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)",
-            (user_id, email, password_hash),
+            "INSERT INTO users (id, email, password_hash, verified) VALUES (?, ?, ?, ?)",
+            (user_id, email, password_hash, verified),
         )
         await db.commit()
+
+
+async def set_user_verified(user_id: str):
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute("UPDATE users SET verified = 1 WHERE id = ?", (user_id,))
+        await db.commit()
+
+
+async def claim_trial(user_id: str, expires_at: str) -> bool:
+    """Atomically claim trial. Returns False if already used."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        cur = await db.execute(
+            "SELECT trial_started_at FROM users WHERE id = ?", (user_id,)
+        )
+        row = await cur.fetchone()
+        if row and row[0]:
+            return False
+        await db.execute(
+            "UPDATE users SET trial_started_at = datetime('now'), trial_expires_at = ? WHERE id = ?",
+            (expires_at, user_id),
+        )
+        await db.commit()
+        return True
 
 
 # ————————————————— Account queries —————————————————

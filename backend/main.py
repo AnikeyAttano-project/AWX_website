@@ -22,6 +22,7 @@ from database import (
     init_db, create_order, get_order, save_platega_tx,
     mark_paid, save_subscription, get_order_by_tx, mark_order_error,
     get_user_subscriptions, get_user_order, set_order_user,
+    claim_trial,
 )
 from platega_client import create_payment, check_status, PlategaError
 from xui_client import (
@@ -30,7 +31,7 @@ from xui_client import (
     XuiError,
 )
 from admin import admin_router
-from auth import auth_router, get_optional_user
+from auth import auth_router, get_optional_user, require_verified_email
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -62,22 +63,19 @@ def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) 
     return True
 
 
-def verify_platega_signature(body: bytes, signature: str) -> bool:
+def verify_platega_webhook(headers: dict) -> bool:
     """
-    Проверяет подпись webhook от Platega через HMAC-SHA256.
-    Platega отправляет подпись в заголовке X-Signature.
+    Проверяет webhook от Platega через заголовки X-MerchantId + X-Secret.
+    Platega использует те же заголовки что и для API запросов.
     """
     if not settings.platega_secret:
         logger.error("PLATEGA_SECRET not set — webhook rejected")
         return False
 
-    expected = hmac.new(
-        settings.platega_secret.encode(),
-        body,
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(expected, signature)
+    merchant_id = headers.get("x-merchantid", "")
+    secret = headers.get("x-secret", "")
+    return (merchant_id == settings.platega_merchant_id and
+            secret == settings.platega_secret)
 
 
 @asynccontextmanager
@@ -206,6 +204,45 @@ async def renew_subscription(order_id: str, user: dict = Depends(get_optional_us
     except XuiError as e:
         logger.error("Renew failed for order %s: %s", order_id, e)
         raise HTTPException(500, f"Ошибка продления: {e}")
+
+
+@account_router.post("/trial/activate")
+async def activate_trial(user: dict = Depends(require_verified_email)):
+    """Активировать пробный период: 3 дня, 25 ГБ, 1 устройство."""
+    expires_at = (datetime.utcnow() + timedelta(days=settings.trial_days)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    if not await claim_trial(user["id"], expires_at):
+        raise HTTPException(400, "Пробный период уже использован")
+
+    order_id = uuid.uuid4().hex[:12]
+    await create_order(order_id, "trial", 0.0)
+    await set_order_user(order_id, user["id"])
+    await mark_paid(order_id)
+
+    try:
+        client_data = await create_client(
+            email=f"trial-{order_id}@vpn.local",
+            duration_days=settings.trial_days,
+            limit_ip=settings.trial_devices,
+            total_gb=settings.trial_gb,
+        )
+        sub_url = await get_subscription_url(client_data["sub_id"])
+        await save_subscription(
+            order_id, f"trial-{order_id}@vpn.local",
+            client_data["sub_id"], sub_url, expires_at=expires_at,
+        )
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "expires_at": expires_at,
+            "trial_gb": settings.trial_gb,
+            "sub_url": sub_url,
+        }
+    except XuiError as e:
+        logger.error("Trial provisioning failed: %s", e)
+        await mark_order_error(order_id, str(e))
+        raise HTTPException(502, f"Ошибка создания пробного ключа: {e}")
 
 
 app.include_router(account_router)
@@ -372,12 +409,11 @@ async def platega_webhook(request: Request):
     Platega шлёт JSON с полями: id, status, payload (наш order_id).
     """
     body = await request.body()
-    signature = request.headers.get("X-Signature", "")
 
-    # Проверяем подпись (если настроен PLATEGA_SECRET)
-    if not verify_platega_signature(body, signature):
-        logger.warning("Invalid webhook signature")
-        raise HTTPException(403, "Invalid signature")
+    # Проверяем webhook через X-MerchantId + X-Secret
+    if not verify_platega_webhook(request.headers):
+        logger.warning("Invalid webhook credentials")
+        raise HTTPException(403, "Invalid credentials")
 
     try:
         body_json = json.loads(body)

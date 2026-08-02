@@ -67,6 +67,21 @@
     backdrop-filter:blur(16px);box-shadow:0 4px 18px rgba(30,30,20,.06);
   }
   .btn-glass:hover{background:rgba(255,255,255,.65);}
+  .hidden{display:none!important;}
+  .nav-user{display:inline-flex;align-items:center;gap:8px;}
+  .nav-email{
+    display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--text);font-size:14px;font-weight:600;text-decoration:none;
+    padding:8px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);
+    transition:border-color .15s;
+  }
+  .nav-email:hover{border-color:var(--accent);}
+  .nav-logout{
+    background:none;border:none;cursor:pointer;color:var(--text-3);
+    padding:8px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;
+    transition:color .15s,background .15s;
+  }
+  .nav-logout:hover{color:#dc2626;background:var(--accent-bg);}
 
   /* Hero */
   .hero{position:relative;z-index:1;padding:130px 0 110px;text-align:center;}
@@ -199,7 +214,13 @@
         <a href="/privacy.html">Документы</a>
       </div>
       <div class="nav-actions">
-        <a href="/account.html" class="btn btn-ghost">Войти</a>
+        <div id="nav-user" class="nav-user hidden">
+          <a href="/account.html" class="nav-email" id="nav-email"></a>
+          <button id="nav-logout" class="nav-logout" onclick="handleNavLogout()" title="Выйти">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l5-5-5-5M21 12H9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <a href="/account.html" class="btn btn-ghost" id="nav-login-link">Войти</a>
         <a href="#tariffs" class="btn btn-dark">Попробовать</a>
       </div>
     </nav>
@@ -453,6 +474,39 @@ async function buyTariff(slug, name, price, days) {
 function closeModal() {
   document.getElementById('payment-modal').classList.remove('active');
 }
+
+async function initNavUser() {
+  const token = localStorage.getItem('awx_token');
+  const loginLink = document.getElementById('nav-login-link');
+  const userBox = document.getElementById('nav-user');
+  const emailEl = document.getElementById('nav-email');
+  if (!token || !loginLink) return;
+  try {
+    const resp = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: {'Authorization': `Bearer ${token}`}
+    });
+    if (!resp.ok) {
+      localStorage.removeItem('awx_token');
+      return;
+    }
+    const data = await resp.json();
+    if (data && data.email) {
+      emailEl.textContent = data.email;
+      emailEl.title = data.email;
+      loginLink.classList.add('hidden');
+      userBox.classList.remove('hidden');
+    }
+  } catch (e) {
+    // Сервер недоступен — оставляем «Войти»
+  }
+}
+
+function handleNavLogout() {
+  localStorage.removeItem('awx_token');
+  window.location.reload();
+}
+
+initNavUser();
 
 loadTariffs();
 

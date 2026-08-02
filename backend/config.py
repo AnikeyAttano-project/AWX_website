@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production-use-random-string"
     jwt_expire_hours: int = 720  # 30 дней
 
+    # Email verification (false = auto-verified at registration)
+    email_verification_required: bool = False
+
+    # Trial subscription
+    trial_days: int = 3
+    trial_gb: int = 25
+    trial_devices: int = 1
+
     # Тарифы: slug → (дней, цена в RUB, название, кол-во устройств, скидка %)
     tariffs: dict = {
         "quantum_month": {"days": 31, "price": 300, "title": "Quantum Месяц", "devices": 5, "discount": 0},
