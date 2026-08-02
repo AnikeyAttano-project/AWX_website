@@ -19,11 +19,13 @@
                 <a href="#features" class="text-gray-600 hover:text-blue-600">Возможности</a>
                 <a href="#tariffs" class="text-gray-600 hover:text-blue-600">Тарифы</a>
                 <a href="#faq" class="text-gray-600 hover:text-blue-600">FAQ</a>
-                <a href="/account.html" class="text-gray-600 hover:text-blue-600"><i class="fas fa-user-circle mr-1"></i>Личный кабинет</a>
+                <a href="/account.html" class="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg hover:bg-blue-200 transition font-semibold">
+                    <i class="fas fa-user-circle mr-1"></i>Личный кабинет
+                </a>
             </div>
             <div class="flex items-center space-x-3">
-                <a href="/account.html" class="text-gray-600 hover:text-blue-600 md:hidden">
-                    <i class="fas fa-user-circle text-xl"></i>
+                <a href="/account.html" class="bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition font-semibold text-sm md:hidden">
+                    <i class="fas fa-user-circle mr-1"></i>Войти
                 </a>
                 <a href="#tariffs" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
                     Попробовать
@@ -35,11 +37,17 @@
     <!-- Hero Section -->
     <section class="container mx-auto px-4 py-16 md:py-24">
         <div class="max-w-4xl mx-auto text-center">
+            <div class="inline-block bg-blue-100 text-blue-700 px-4 py-1 rounded-full text-sm font-semibold mb-4">
+                ⚛️ Quantum
+            </div>
             <h1 class="text-4xl md:text-6xl font-bold text-gray-900 mb-6">
-                Быстрый, безопасный и анонимный доступ к интернету
+                Твой приватный доступ в сеть
             </h1>
-            <p class="text-xl text-gray-600 mb-8">
-                Без логов, без ограничений, без проблем!
+            <p class="text-xl text-gray-600 mb-4">
+                Быстрый, безопасный и конфиденциальный доступ к сети.
+            </p>
+            <p class="text-lg text-gray-500 mb-8">
+                Надёжное шифрование данных и высокая скорость работы.
             </p>
             <div class="flex flex-col sm:flex-row gap-4 justify-center">
                 <a href="#tariffs" class="bg-blue-600 text-white px-8 py-4 rounded-lg text-lg font-semibold hover:bg-blue-700 transition">
@@ -55,37 +63,64 @@
     <!-- Features Section -->
     <section id="features" class="bg-white py-16">
         <div class="container mx-auto px-4">
-            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-12">
-                Что вы получаете с AWX VPN?
+            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-4">
+                Наши преимущества
             </h2>
-            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-6xl mx-auto">
-                <div class="text-center p-6">
-                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <i class="fas fa-server text-blue-600 text-2xl"></i>
+            <p class="text-center text-gray-500 mb-12">Почему выбирают AWX VPN</p>
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
+                <div class="flex items-start p-6 bg-gray-50 rounded-xl">
+                    <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
+                        <i class="fas fa-eye-slash text-green-600 text-xl"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-2">Доступ к нескольким серверам и протоколам</h3>
-                    <p class="text-gray-600">Вся сеть серверов доступна по одной подписке.</p>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-1">No-Logs</h3>
+                        <p class="text-gray-600 text-sm">Не храним историю и данные</p>
+                    </div>
                 </div>
-                <div class="text-center p-6">
-                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <i class="fas fa-bolt text-blue-600 text-2xl"></i>
+                <div class="flex items-start p-6 bg-gray-50 rounded-xl">
+                    <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
+                        <i class="fas fa-tachometer-alt text-blue-600 text-xl"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-2">Высокая скорость соединения</h3>
-                    <p class="text-gray-600">Стабильное соединение без искусственных ограничений скорости.</p>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-1">1 Gbps</h3>
+                        <p class="text-gray-600 text-sm">Высокий приоритет и стабильность канала</p>
+                    </div>
                 </div>
-                <div class="text-center p-6">
-                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <i class="fas fa-project-diagram text-blue-600 text-2xl"></i>
+                <div class="flex items-start p-6 bg-gray-50 rounded-xl">
+                    <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
+                        <i class="fas fa-laptop text-purple-600 text-xl"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-2">Несколько протоколов на выбор</h3>
-                    <p class="text-gray-600">VLESS, Trojan и другие — выбирайте под свою сеть.</p>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-1">Все устройства</h3>
+                        <p class="text-gray-600 text-sm">iOS, Android, Windows, macOS</p>
+                    </div>
                 </div>
-                <div class="text-center p-6">
-                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <i class="fas fa-mobile-alt text-blue-600 text-2xl"></i>
+                <div class="flex items-start p-6 bg-gray-50 rounded-xl">
+                    <div class="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
+                        <i class="fas fa-gamepad text-orange-600 text-xl"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-2">5 устройств одновременно</h3>
-                    <p class="text-gray-600"><span class="font-semibold text-blue-600">Quantum</span> — одна подписка для всех ваших устройств.</p>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-1">Игровой режим</h3>
+                        <p class="text-gray-600 text-sm">Минимальная задержка и потери</p>
+                    </div>
+                </div>
+                <div class="flex items-start p-6 bg-gray-50 rounded-xl">
+                    <div class="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
+                        <i class="fas fa-globe text-red-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-1">Авто-регион</h3>
+                        <p class="text-gray-600 text-sm">Автоматический выбор оптимального сервера</p>
+                    </div>
+                </div>
+                <div class="flex items-start p-6 bg-gray-50 rounded-xl">
+                    <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
+                        <i class="fas fa-shield-alt text-yellow-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-1">Двойной туннель</h3>
+                        <p class="text-gray-600 text-sm">Quantum: смарт-сеть, без рекламы YouTube</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -255,8 +290,22 @@
             }
         }
 
+        // Проверка авторизации
+        function isAuthenticated() {
+            return localStorage.getItem('awx_token') !== null;
+        }
+
         // Покупка тарифа
         async function buyTariff(slug, name, price, days) {
+            // Проверяем авторизацию
+            if (!isAuthenticated()) {
+                // Сохраняем выбранный тариф для после входа
+                localStorage.setItem('awx_pending_tariff', JSON.stringify({slug, name, price, days}));
+                // Редирект на страницу входа с сообщением
+                window.location.href = '/account.html?redirect=buy';
+                return;
+            }
+
             document.getElementById('payment-modal').classList.remove('hidden');
             // Показываем детали Quantum-плана, затем спиннер при создании заказа
             document.getElementById('modal-content').innerHTML = `
@@ -283,9 +332,13 @@
             `;
 
             try {
+                const token = localStorage.getItem('awx_token');
+                const headers = { 'Content-Type': 'application/json' };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+
                 const resp = await fetch(`${API_BASE}/api/order/create`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({ tariff: slug })
                 });
 
@@ -321,9 +374,13 @@
             `;
 
             try {
+                const token = localStorage.getItem('awx_token');
+                const headers = { 'Content-Type': 'application/json' };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+
                 const resp = await fetch(`${API_BASE}/api/order/demo`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({ tariff: slug })
                 });
 
