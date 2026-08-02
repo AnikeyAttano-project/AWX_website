@@ -1,0 +1,7 @@
+backend/.env
+backend/orders.db
+backend/__pycache__/
+backend/*.pyc
+backend/venv/
+*.log
+.DS_Store

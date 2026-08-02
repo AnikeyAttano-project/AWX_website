@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWX VPN — Быстрый и безопасный VPN</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="bg-white shadow-sm">
+        <nav class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fas fa-shield-alt text-blue-600 text-2xl"></i>
+                <span class="text-xl font-bold text-gray-800">AWX VPN</span>
+            </div>
+            <div class="hidden md:flex space-x-6">
+                <a href="#features" class="text-gray-600 hover:text-blue-600">Возможности</a>
+                <a href="#tariffs" class="text-gray-600 hover:text-blue-600">Тарифы</a>
+                <a href="#faq" class="text-gray-600 hover:text-blue-600">FAQ</a>
+            </div>
+            <a href="#tariffs" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
+                Попробовать
+            </a>
+        </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="container mx-auto px-4 py-16 md:py-24">
+        <div class="max-w-4xl mx-auto text-center">
+            <h1 class="text-4xl md:text-6xl font-bold text-gray-900 mb-6">
+                Безопасный доступ к интернету
+                <span class="text-blue-600">без ограничений</span>
+            </h1>
+            <p class="text-xl text-gray-600 mb-8">
+                Высокая скорость, надёжная защита данных и простая настройка за 2 минуты
+            </p>
+            <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                <a href="#tariffs" class="bg-blue-600 text-white px-8 py-4 rounded-lg text-lg font-semibold hover:bg-blue-700 transition">
+                    Выбрать тариф
+                </a>
+                <a href="#features" class="bg-white text-blue-600 px-8 py-4 rounded-lg text-lg font-semibold border-2 border-blue-600 hover:bg-blue-50 transition">
+                    Узнать больше
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="bg-white py-16">
+        <div class="container mx-auto px-4">
+            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-12">
+                Почему выбирают AWX VPN?
+            </h2>
+            <div class="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+                <div class="text-center p-6">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-bolt text-blue-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Высокая скорость</h3>
+                    <p class="text-gray-600">До 1 Гбит/с на премиум-серверах. Без ограничений скорости.</p>
+                </div>
+                <div class="text-center p-6">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-lock text-blue-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Безопасность</h3>
+                    <p class="text-gray-600">Шифрование военного уровня. Никакого логирования.</p>
+                </div>
+                <div class="text-center p-6">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-mobile-alt text-blue-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Простота</h3>
+                    <p class="text-gray-600">Настройка за 2 минуты на всех устройствах.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tariffs Section -->
+    <section id="tariffs" class="py-16">
+        <div class="container mx-auto px-4">
+            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-12">
+                Выберите свой тариф
+            </h2>
+            <div id="tariffs-container" class="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+                <!-- Тарифы загружаются динамически -->
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section id="faq" class="bg-white py-16">
+        <div class="container mx-auto px-4">
+            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-12">
+                Часто задаваемые вопросы
+            </h2>
+            <div class="max-w-3xl mx-auto space-y-4">
+                <details class="bg-gray-50 rounded-lg p-6">
+                    <summary class="font-semibold text-lg cursor-pointer">Как начать пользоваться?</summary>
+                    <p class="mt-4 text-gray-600">
+                        1. Выберите тариф и оплатите<br>
+                        2. Получите ссылку подписки и QR-код<br>
+                        3. Установите приложение (v2rayNG, Hiddify, V2Box)<br>
+                        4. Добавьте подписку — готово!
+                    </p>
+                </details>
+                <details class="bg-gray-50 rounded-lg p-6">
+                    <summary class="font-semibold text-lg cursor-pointer">Какие устройства поддерживаются?</summary>
+                    <p class="mt-4 text-gray-600">
+                        iOS, Android, Windows, macOS, Linux — все популярные платформы.
+                    </p>
+                </details>
+                <details class="bg-gray-50 rounded-lg p-6">
+                    <summary class="font-semibold text-lg cursor-pointer">Есть ли гарантия возврата денег?</summary>
+                    <p class="mt-4 text-gray-600">
+                        Да, если VPN не работает — свяжитесь с нами в течение 24 часов.
+                    </p>
+                </details>
+                <details class="bg-gray-50 rounded-lg p-6">
+                    <summary class="font-semibold text-lg cursor-pointer">Как продлить подписку?</summary>
+                    <p class="mt-4 text-gray-600">
+                        Просто купите новый тариф с тем же email — срок действия продлится автоматически.
+                        <strong>Важно:</strong> продлевайте там же, где купили (сайт или Telegram-бот).
+                    </p>
+                </details>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900 text-white py-8">
+        <div class="container mx-auto px-4 text-center">
+            <div class="flex justify-center space-x-6 mb-4">
+                <a href="mailto:support@awxvpn.com" class="hover:text-blue-400">
+                    <i class="fas fa-envelope"></i> support@awxvpn.com
+                </a>
+            </div>
+            <p class="text-gray-400 text-sm">
+                © 2026 AWX VPN. Все права защищены.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Modal для оплаты -->
+    <div id="payment-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-2xl font-bold">Оформление заказа</h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-2xl"></i>
+                </button>
+            </div>
+            <div id="modal-content">
+                <div class="text-center py-8">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p class="mt-4 text-gray-600">Создание заказа...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000'; // Измените на ваш домен
+
+        // Загрузка тарифов
+        async function loadTariffs() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/tariffs`);
+                const tariffs = await resp.json();
+
+                const container = document.getElementById('tariffs-container');
+                container.innerHTML = tariffs.map((t, idx) => `
+                    <div class="bg-white rounded-lg shadow-lg p-8 ${idx === 1 ? 'ring-2 ring-blue-600' : ''}">
+                        ${idx === 1 ? '<div class="bg-blue-600 text-white text-sm font-semibold px-3 py-1 rounded-full inline-block mb-4">Популярный</div>' : ''}
+                        <h3 class="text-2xl font-bold mb-2">${t.title}</h3>
+                        <div class="text-4xl font-bold text-blue-600 mb-6">
+                            ${t.price} ₽
+                            <span class="text-lg text-gray-500">/ ${t.days} дн.</span>
+                        </div>
+                        <ul class="space-y-3 mb-8">
+                            <li class="flex items-center text-gray-700">
+                                <i class="fas fa-check text-green-500 mr-2"></i>
+                                Безлимитный трафик
+                            </li>
+                            <li class="flex items-center text-gray-700">
+                                <i class="fas fa-check text-green-500 mr-2"></i>
+                                Высокая скорость
+                            </li>
+                            <li class="flex items-center text-gray-700">
+                                <i class="fas fa-check text-green-500 mr-2"></i>
+                                Все устройства
+                            </li>
+                        </ul>
+                        <button onclick="buyTariff('${t.slug}')" class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition">
+                            Купить
+                        </button>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load tariffs:', e);
+            }
+        }
+
+        // Покупка тарифа
+        async function buyTariff(slug) {
+            document.getElementById('payment-modal').classList.remove('hidden');
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/order/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tariff: slug })
+                });
+
+                const data = await resp.json();
+
+                if (data.payment_url) {
+                    // Редирект на страницу оплаты
+                    window.location.href = data.payment_url;
+                } else {
+                    throw new Error('No payment URL');
+                }
+            } catch (e) {
+                document.getElementById('modal-content').innerHTML = `
+                    <div class="text-center text-red-600">
+                        <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
+                        <p>Ошибка при создании заказа. Попробуйте позже.</p>
+                        <button onclick="closeModal()" class="mt-4 bg-gray-200 px-6 py-2 rounded">
+                            Закрыть
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('payment-modal').classList.add('hidden');
+        }
+
+        // Загрузка при старте
+        loadTariffs();
+    </script>
+</body>
+</html>
