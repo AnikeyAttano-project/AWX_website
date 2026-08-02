@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     xui_inbound_ids: str = "5,6,7,8,10,12,13,14"
 
     # Базовый URL subscription-сервера (port 2096)
-    # https://attanovpn.duckdns.org:2096/sub/
+    # Формат: https://your-panel-host:2096/sub/
     xui_sub_base_url: str = ""
 
     # SSL: отключить проверку сертификата для self-signed (3x-UI)
