@@ -1,13 +1,13 @@
-# 🚀 AWX-WEB-lite — Упрощённая витрина VPN-магазина
+# 🚀 AWX-WEB-lite — VPN магазин
 
-> **Версия:** 1.1  
+> **Версия:** 2.0  
 > **Дата:** 2 августа 2026
 
-Легковесная веб-витрина для продажи VPN-подписок с прямой интеграцией **Platega** (оплата) + **3x-UI панель** (выдача ключей).
+Легковесная веб-витрина для продажи VPN-подписок с интеграцией **Platega** (оплата) + **3x-UI панель** (выдача ключей) + **Личный кабинет**.
 
 ---
 
-## 📦 Что внутри
+## 📦 Возможности
 
 **Backend (Python FastAPI):**
 - ✅ API тарифов (`/api/tariffs`)
@@ -15,16 +15,20 @@
 - ✅ Webhook для подтверждения оплаты (`/webhook/platega`)
 - ✅ Автоматическое создание клиента в 3x-UI после оплаты
 - ✅ Страница успеха с QR-кодом и sub-ссылкой
+- ✅ **Личный кабинет** — JWT авторизация, управление подписками
+- ✅ **Админ-панель** — просмотр заказов, статистика, retry
 
 **Frontend (HTML + Tailwind CSS):**
-- ✅ Главная страница с hero-секцией
-- ✅ Блок возможностей
-- ✅ Карточки тарифов (загружаются динамически)
+- ✅ Главная страница с hero-секцией (Quantum тарифы)
+- ✅ Блок возможностей (5 устройств, безлимит,多服务器)
+- ✅ Карточки тарифов с автоматическими скидками
 - ✅ FAQ секция
+- ✅ **Личный кабинет** — вход/регистрация, подписки, ключи, QR
 - ✅ Адаптивный дизайн (mobile-first)
 
-**База данных (SQLite):**
-- Таблица `orders` — история заказов, привязка к 3x-UI клиентам
+**База данных (SQLite + WAL):**
+- Таблица `users` — аккаунты пользователей
+- Таблица `orders` — история заказов, привязка к 3x-UI и пользователям
 
 ---
 
@@ -51,14 +55,14 @@ pip install -r requirements.txt
 
 ```env
 # ===== 3x-UI панель =====
-XUI_BASE_URL=https://attanovpn.duckdns.org:20095/fZD4ErAq8nug3iH7KZ
+XUI_BASE_URL=https://your-panel-host:port/webBasePath
 XUI_API_TOKEN=your_bearer_token
 
 # Все видимые инбаунды через запятую
 XUI_INBOUND_IDS=5,6,7,8,10,12,13,14
 
-# Базовый URL subscription-сервера (port 2096!)
-XUI_SUB_BASE_URL=https://attanovpn.duckdns.org:2096/sub/
+# Базовый URL subscription-сервера
+XUI_SUB_BASE_URL=https://your-panel-host:2096/sub/
 
 # ===== Platega =====
 PLATEGA_MERCHANT_ID=your_merchant_id
@@ -68,6 +72,15 @@ PLATEGA_API_URL=https://app.platega.io
 # ===== Сайт =====
 SITE_BASE_URL=https://your-domain.com
 DATABASE_PATH=orders.db
+
+# ===== Авторизация =====
+JWT_SECRET=your-secret-key-min-32-chars
+
+# ===== Админ-панель =====
+ADMIN_API_KEY=your-admin-api-key
+
+# ===== CORS =====
+ALLOWED_ORIGINS=["https://your-domain.com"]
 ```
 
 ### 3️⃣ Запуск backend
@@ -86,12 +99,10 @@ Backend будет доступен на `http://localhost:8000`
 
 Просто откройте `frontend/index.html` в браузере или разместите на веб-сервере.
 
-**Важно:** В `frontend/index.html` измените строку:
+**Важно:** В `frontend/index.html` и `frontend/account.html` измените:
 ```javascript
 const API_BASE = 'http://localhost:8000'; // Измените на ваш домен
 ```
-
-на ваш реальный домен backend (например `https://api.awxvpn.com`).
 
 ---
 
@@ -99,48 +110,79 @@ const API_BASE = 'http://localhost:8000'; // Измените на ваш дом
 
 ```mermaid
 sequenceDiagram
-    Пользователь->>Сайт: Выбирает тариф, нажимает "Купить"
+    Пользователь->>Сайт: Выбирает тариф
     Сайт->>Backend: POST /api/order/create {tariff}
     Backend->>БД: Создаёт заказ (status=pending)
     Backend->>Platega: Создаёт платёжную ссылку
-    Platega-->>Backend: {transaction_id, payment_url}
     Backend-->>Сайт: {order_id, payment_url}
-    Сайт->>Platega: Редирект на страницу оплаты
-    Пользователь->>Platega: Оплачивает картой
-    Platega->>Backend: POST /webhook/platega {tx_id, status}
-    Backend->>Platega: GET /transaction/{tx_id} (двойная проверка)
-    Backend->>3x-UI: POST /panel/api/clients/add (inboundIds: [5,6,7,8,10,12,13,14])
-    Backend->>3x-UI: GET /panel/api/clients/get/{email} (получаем subId)
-    Backend->>Backend: Формируем sub_url = XUI_SUB_BASE_URL + subId
+    Сайт->>Platega: Редирект на оплату
+    Пользователь->>Platega: Оплачивает
+    Platega->>Backend: POST /webhook/platega
+    Backend->>3x-UI: Создаёт клиента во всех инбаундах
     Backend->>БД: Сохраняет sub_url
-    Platega->>Сайт: Редирект на /payment/success?order_id=XXX
-    Сайт->>Backend: GET /api/order/{order_id}/status (polling)
+    Сайт->>Backend: GET /api/order/{id}/status (polling)
     Backend-->>Сайт: {sub_url, qr_base64}
-    Сайт->>Пользователь: Показывает QR-код + ссылку подписки
+    Сайт->>Пользователь: QR-код + ссылка подписки
 ```
 
 ---
 
 ## 📋 API Эндпоинты
 
+### Публичные
 | Метод | Путь | Описание |
 |---|---|---|
 | `GET` | `/api/tariffs` | Список тарифов |
 | `POST` | `/api/order/create` | Создание заказа |
-| `GET` | `/api/order/{id}/status` | Статус заказа + sub-ссылка |
+| `GET` | `/api/order/{id}/status` | Статус заказа |
 | `POST` | `/webhook/platega` | Webhook от Platega |
-| `GET` | `/payment/success` | Страница успеха (HTML) |
-| `GET` | `/payment/failed` | Страница ошибки (HTML) |
+
+### Авторизация
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/auth/register` | Регистрация (email + пароль) |
+| `POST` | `/api/auth/login` | Вход (email + пароль → JWT) |
+| `GET` | `/api/auth/me` | Текущий пользователь |
+
+### Личный кабинет
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/account/subscriptions` | Список подписок |
+| `GET` | `/api/account/subscription/{id}` | Детали подписки + QR |
+| `POST` | `/api/account/renew/{id}` | Продление подписки |
+
+### Админ-панель
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/admin/orders` | Список заказов |
+| `GET` | `/admin/orders/{id}` | Детали заказа |
+| `POST` | `/admin/orders/{id}/retry` | Повтор failed заказа |
+| `GET` | `/admin/stats` | Статистика |
+| `POST` | `/admin/tariffs` | Обновление тарифов |
+
+---
+
+## 🏠 Личный кабинет
+
+Пользователи могут:
+- Зарегистрировать аккаунт (email + пароль)
+- Войти в личный кабинет
+- Просматривать все свои подписки
+- Показать ключ подписки и QR-код
+- Продлить активную подписку
+
+Страница ЛК: `frontend/account.html`
 
 ---
 
 ## 🔐 Безопасность
 
 1. **Bearer-токен 3x-UI** — храните в `.env`, никогда не коммитьте
-2. **Platega Secret** — используется для подписи запросов
+2. **JWT_SECRET** — используйте сложный случайный ключ (минимум 32 символа)
 3. **HTTPS обязателен** — без него токены летят открытым текстом
-4. **Webhook IP whitelist** — ограничьте доступ к `/webhook/platega` в файерволе панели
-5. **Rate limiting** — 10 заказов в час с одного IP
+4. **CSP заголовки** — Content-Security-Policy настроен по умолчанию
+5. **Rate limiting** — 10 заказов/час, 30 запросов статуса/мин
+6. **XSS защита** — все пользовательские данные экранируются
 
 ---
 
@@ -148,10 +190,10 @@ sequenceDiagram
 
 1. Зайдите в личный кабинет Platega
 2. **Настройки** → **Webhook URL**
-3. Укажите: `https://ваш-домен.com/webhook/platega`
+3. Укажите: `https://your-domain.com/webhook/platega`
 4. Сохраните
 
-Если webhook не работает — сайт использует **polling** (опрашивает Platega каждые 2 секунды после редиректа).
+Если webhook не работает — сайт использует **polling** (опрашивает Platega автоматически).
 
 ---
 
@@ -162,10 +204,10 @@ sequenceDiagram
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name awxvpn.com;
+    server_name your-domain.com;
 
-    ssl_certificate /etc/letsencrypt/live/awxvpn.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/awxvpn.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
 
     # Frontend
     location / {
@@ -191,6 +233,12 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
+
+    location /admin/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
 }
 ```
 
@@ -212,12 +260,6 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-Запуск:
-```bash
-sudo systemctl enable awx-backend
-sudo systemctl start awx-backend
-```
-
 ---
 
 ## 📊 Структура проекта
@@ -225,36 +267,24 @@ sudo systemctl start awx-backend
 ```
 AWX-WEB-lite/
 ├── backend/
-│   ├── .env.example
-│   ├── requirements.txt
-│   ├── config.py           # Настройки из .env
-│   ├── database.py         # Работа с БД (SQLite)
-│   ├── xui_client.py       # Клиент 3x-UI API
-│   ├── platega_client.py   # Клиент Platega API
-│   └── main.py             # FastAPI приложение
-└── frontend/
-    └── index.html          # Витрина (HTML + Tailwind)
+│   ├── .env.example          # Шаблон конфигурации
+│   ├── requirements.txt      # Зависимости Python
+│   ├── config.py             # Настройки из .env
+│   ├── auth.py               # JWT авторизация
+│   ├── admin.py              # Админ-панель API
+│   ├── database.py           # SQLite + миграции
+│   ├── xui_client.py         # Клиент 3x-UI API
+│   ├── platega_client.py     # Клиент Platega API
+│   └── main.py               # FastAPI приложение
+├── frontend/
+│   ├── index.html            # Лендинг (витрина)
+│   └── account.html          # Личный кабинет
+└── start.bat                 # Быстрый старт (Windows)
 ```
 
 ---
 
 ## ❓ FAQ
-
-### Клиенты созданные через сайт видны в боте?
-
-**Нет.** Сайт и бот YadrenoVPN работают независимо. Клиенты, купленные на сайте, создаются с email вида `order-{id}@vpn.local` и **не видны** в БД бота.
-
-**Рекомендация:** добавьте на сайт инструкцию: *"Продлевайте подписку там же, где купили"*.
-
-### Как добавить несколько серверов?
-
-Список серверов определяется автоматически из панели 3x-UI. В `.env` уже заданы все видимые инбаунды:
-
-```env
-XUI_INBOUND_IDS=5,6,7,8,10,12,13,14
-```
-
-Если вы добавите новый сервер в панель с видимым remark (без `--!` префикса), добавьте его ID в этот список.
 
 ### Как изменить тарифы?
 
@@ -262,22 +292,25 @@ XUI_INBOUND_IDS=5,6,7,8,10,12,13,14
 
 ```python
 tariffs: dict = {
-    "week": {"days": 7, "price": 99, "title": "Неделя"},
-    "month": {"days": 30, "price": 199, "title": "1 месяц"},
-    "year": {"days": 365, "price": 1499, "title": "Год"},
+    "quantum_month": {"days": 31, "price": 300, "title": "Quantum Месяц", "devices": 5, "discount": 0},
+    "quantum_quarter": {"days": 93, "price": 855, "title": "Quantum 3 Месяца", "devices": 5, "discount": 5},
 }
 ```
 
----
+Или через админ-панель: `POST /admin/tariffs`
 
-## 🆘 Поддержка
+### Как добавить серверы?
 
-Если возникли проблемы:
+В `.env` укажите ID инбаундов через запятую:
 
-1. Проверьте логи backend: `python main.py`
-2. Убедитесь что Bearer-токен 3x-UI действителен
-3. Проверьте что webhook Platega настроен (или используется polling)
-4. Проверьте CORS: в production укажите ваш домен вместо `*`
+```env
+XUI_INBOUND_IDS=5,6,7,8,10,12,13,14
+```
+
+### Как зайти в админ-панель?
+
+1. Задайте `ADMIN_API_KEY` в `.env`
+2. Отправляйте запросы с заголовком `X-Admin-Key: ваш_ключ`
 
 ---
 
@@ -288,4 +321,4 @@ MIT License
 ---
 
 **Создано:** 2 августа 2026  
-**Автор:** Claude Code (на основе документации YadrenoVPN)
+**Автор:** Claude Code
