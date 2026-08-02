@@ -33,7 +33,8 @@ async def create_payment(
         "description": description[:255],
         "return": f"{settings.site_base_url}/payment/success?order_id={order_id}",
         "failedUrl": f"{settings.site_base_url}/payment/failed?order_id={order_id}",
-        "payload": order_id,
+        # Поле "payload" не существует в Platega API — Platega молча игнорирует.
+        # Для связи заказа с транзакцией используем поиск по transaction_id.
     }
 
     async with httpx.AsyncClient(timeout=30) as client:

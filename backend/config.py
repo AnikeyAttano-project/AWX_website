@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # https://attanovpn.duckdns.org:2096/sub/
     xui_sub_base_url: str = ""
 
+    # SSL: отключить проверку сертификата для self-signed (3x-UI)
+    # В продакшене с валидным сертификатом установите "true"
+    xui_verify_ssl: str = "false"
+
     # Platega
     platega_merchant_id: str
     platega_secret: str

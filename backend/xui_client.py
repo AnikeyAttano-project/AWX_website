@@ -20,6 +20,11 @@ def _ms_timestamp(days: int) -> int:
     return int((time.time() + days * 86400) * 1000)
 
 
+def _verify_ssl() -> bool:
+    """Проверка SSL: по умолчанию отключена для self-signed сертификатов."""
+    return settings.xui_verify_ssl.lower() == "true"
+
+
 def _parse_inbound_ids() -> list[int]:
     """Парсит XUI_INBOUND_IDS из строки '5,6,7,8,10,12,13,14' в список."""
     raw = settings.xui_inbound_ids
@@ -55,7 +60,7 @@ async def create_client(
         "inboundIds": inbound_ids,  # ← КЛЮЧЕВОЕ: передаём весь список!
     }
 
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
         # Шаг 1: создаём клиента во всех инбаундах
         resp = await client.post(
             f"{settings.xui_base_url}/panel/api/clients/add",
@@ -76,7 +81,7 @@ async def create_client(
     # Небольшая задержка на случай гонки БД
     await asyncio.sleep(0.3)
 
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
         resp = await client.get(
             f"{settings.xui_base_url}/panel/api/clients/get/{email}",
             headers=_headers(),
@@ -109,7 +114,7 @@ async def get_share_links(sub_id: str) -> list[str]:
     Получает отдельные vless:// / hysteria:// ссылки (для отображения/QR).
     /subLinks возвращает массив строк!
     """
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
         resp = await client.get(
             f"{settings.xui_base_url}/panel/api/clients/subLinks/{sub_id}",
             headers=_headers(),
@@ -142,7 +147,7 @@ async def renew_client(email: str, add_days: int) -> dict:
 
     Продление идёт от текущей даты истечения (max(current_expiry, now)).
     """
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
         # 1. Читаем текущие данные
         resp = await client.get(
             f"{settings.xui_base_url}/panel/api/clients/get/{email}",
@@ -170,7 +175,7 @@ async def renew_client(email: str, add_days: int) -> dict:
     current["enable"] = True
 
     # 3. Отправляем ПОЛНУЮ модель
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
         resp = await client.post(
             f"{settings.xui_base_url}/panel/api/clients/update/{email}",
             json=current, headers=_headers(),
@@ -187,7 +192,7 @@ async def check_client_status(email: str) -> dict:
     """
     Проверяет статус клиента (активен, сколько осталось, сколько потрачено).
     """
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
         resp = await client.get(
             f"{settings.xui_base_url}/panel/api/clients/get/{email}",
             headers=_headers(),
@@ -213,7 +218,7 @@ async def get_visible_inbound_ids() -> list[int]:
     Получает список видимых инбаундов с панели, фильтруя --! префикс.
     Улучшение: если в .env список не задан — получаем динамически.
     """
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
         resp = await client.get(
             f"{settings.xui_base_url}/panel/api/inbounds/list",
             headers=_headers(),
