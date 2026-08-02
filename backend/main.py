@@ -323,11 +323,16 @@ async def api_order_status(order_id: str, request: Request):
     if not order:
         raise HTTPException(404, "Заказ не найден")
 
-    # Case 1: paid but no key created (3x-UI error) → retry
+    logger.info("Status check for order %s: status=%s, has_sub_url=%s, has_tx=%s",
+                order_id, order["status"], bool(order.get("sub_url")), bool(order.get("platega_tx_id")))
+
+    # Case 1: paid but no key created → retry fulfill_order
     if order["status"] == "paid" and not order.get("sub_url"):
+        logger.info("Order %s is paid but has no sub_url, retrying fulfill_order", order_id)
         try:
             await fulfill_order(order_id)
             order = await get_order(order_id)
+            logger.info("After retry: order %s sub_url=%s", order_id, bool(order.get("sub_url")))
         except Exception as e:
             logger.error("Retry failed for order %s: %s", order_id, e)
 
@@ -342,6 +347,10 @@ async def api_order_status(order_id: str, request: Request):
         except PlategaError as e:
             logger.error("Polling error for order %s: %s", order_id, e)
 
+    # Case 3: not paid and no tx_id yet → wait for webhook
+    elif order["status"] != "paid" and not order.get("platega_tx_id"):
+        logger.info("Order %s: no tx_id yet, waiting for webhook or Platega redirect", order_id)
+
     response = {
         "order_id": order["id"],
         "status": order["status"],
@@ -351,6 +360,7 @@ async def api_order_status(order_id: str, request: Request):
     if order.get("sub_url"):
         response["sub_url"] = order["sub_url"]
         response["qr_base64"] = _make_qr_base64(order["sub_url"])
+        logger.info("Returning sub_url for order %s", order_id)
 
     return response
 
@@ -438,6 +448,9 @@ async def fulfill_order(order_id: str):
     # Уникальный email на основе тарифа и номера заказа
     email = f"{order['tariff']}-{order_id}@vpn.local"
 
+    logger.info("Fulfilling order %s: tariff=%s, days=%s, devices=%s, email=%s",
+                order_id, order["tariff"], days, devices, email)
+
     try:
         # КЛЮЧЕВОЙ МОМЕНТ —
         # Создаём клиента ВО ВСЕХ видимых инбаундах
@@ -447,6 +460,8 @@ async def fulfill_order(order_id: str):
             duration_days=days,
             limit_ip=devices,
         )
+
+        logger.info("Client created for order %s: sub_id=%s", order_id, client_data.get("sub_id"))
 
         # Получаем URL подписки
         sub_url = await get_subscription_url(client_data["sub_id"])
@@ -461,14 +476,18 @@ async def fulfill_order(order_id: str):
             expires_at=expires_at,
         )
         logger.info(
-            "Order %s fulfilled: email=%s sub=%s",
-            order_id, email, sub_url[:50],
+            "Order %s fulfilled successfully: email=%s sub_url=%s",
+            order_id, email, sub_url[:80],
         )
 
     except XuiError as e:
         # Логируем ошибку, заказ остаётся в статусе 'paid'
         # но без выданного ключа — нужна ручная проверка
-        logger.error("Failed to create client for order %s: %s", order_id, e)
+        logger.error("XuiError for order %s: %s", order_id, e)
+        await mark_order_error(order_id, str(e))
+        return
+    except Exception as e:
+        logger.error("Unexpected error for order %s: %s", order_id, e)
         await mark_order_error(order_id, str(e))
         return
 
