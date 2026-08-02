@@ -183,11 +183,16 @@
                 const resp = await fetch(`${API_BASE}/api/tariffs`);
                 const tariffs = await resp.json();
 
-                const monthPrice = tariffs.find(t => t.slug === 'month')?.price;
+                const monthPrice = tariffs.find(t => t.slug === 'quantum_month')?.price;
 
                 const planName = (slug, title) => {
-                    const names = { month: 'Quantum Месяц', quarter: 'Quantum 3 месяца', year: 'Quantum 12 месяцев' };
-                    return names[slug] || `Quantum ${title}`;
+                    const names = {
+                        quantum_month: 'Quantum Месяц',
+                        quantum_quarter: 'Quantum 3 Месяца',
+                        quantum_halfyear: 'Quantum 6 Месяцев',
+                        quantum_year: 'Quantum 12 Месяцев'
+                    };
+                    return names[slug] || title;
                 };
 
                 const container = document.getElementById('tariffs-container');
