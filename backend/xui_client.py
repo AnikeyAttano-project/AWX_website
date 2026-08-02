@@ -66,7 +66,8 @@ async def create_client(
     if not data.get("success"):
         msg = data.get("msg", "")
         # Идемпотентность: если клиент уже существует — не ошибка
-        if "already exists" in str(msg).lower() or "exist" in str(msg).lower():
+        msg_lower = str(msg).lower()
+        if "already exists" in msg_lower or "already in use" in msg_lower or "exist" in msg_lower:
             pass
         else:
             raise XuiError(f"3x-UI add error: {msg}")
@@ -153,6 +154,10 @@ async def renew_client(email: str, add_days: int) -> dict:
         raise XuiError(f"Cannot find client {email}")
 
     current = data["obj"]["client"]
+
+    # Удаляем числовой id (DB primary key) — Go model.Client.id это string (UUID),
+    # иначе JSON unmarshal молча падает с "cannot unmarshal number into string"
+    current.pop("id", None)
 
     # 2. Вычисляем новый expiryTime
     now_ms = int(time.time() * 1000)
