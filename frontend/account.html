@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Личный кабинет — AWX VPN</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .tab-active { background-color: #ffffff; color: #2563eb; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
+        .tab-inactive { color: #6b7280; }
+        .tab-inactive:hover { color: #2563eb; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm">
+        <nav class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <a href="index.html" class="flex items-center space-x-2">
+                <i class="fas fa-shield-alt text-blue-600 text-2xl"></i>
+                <span class="text-xl font-bold text-gray-800">AWX VPN</span>
+            </a>
+            <div class="hidden md:flex space-x-6">
+                <a href="index.html#features" class="text-gray-600 hover:text-blue-600">Возможности</a>
+                <a href="index.html#tariffs" class="text-gray-600 hover:text-blue-600">Тарифы</a>
+                <a href="index.html#faq" class="text-gray-600 hover:text-blue-600">FAQ</a>
+            </div>
+            <a href="index.html#tariffs" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
+                Попробовать
+            </a>
+        </nav>
+    </header>
+
+    <main class="flex-grow">
+
+        <!-- ==================== АВТОРИЗАЦИЯ ==================== -->
+        <div id="auth-section" class="section hidden container mx-auto px-4 py-12">
+            <div class="max-w-md mx-auto">
+                <div class="text-center mb-8">
+                    <i class="fas fa-user-circle text-blue-600 text-5xl"></i>
+                    <h1 class="text-3xl font-bold text-gray-900 mt-4">Личный кабинет</h1>
+                    <p class="text-gray-600 mt-2">Войдите или зарегистрируйтесь, чтобы управлять подписками</p>
+                </div>
+
+                <div class="bg-white rounded-2xl shadow-lg p-8">
+                    <!-- Переключатель Вход / Регистрация -->
+                    <div class="grid grid-cols-2 gap-1 bg-gray-100 rounded-lg p-1 mb-8">
+                        <button type="button" id="tab-login" onclick="showAuthForm('login')"
+                                class="py-2 rounded-lg font-semibold transition tab-active">Вход</button>
+                        <button type="button" id="tab-register" onclick="showAuthForm('register')"
+                                class="py-2 rounded-lg font-semibold transition tab-inactive">Регистрация</button>
+                    </div>
+
+                    <!-- Форма входа -->
+                    <form id="login-form" onsubmit="handleLogin(event)">
+                        <div class="mb-4">
+                            <label for="login-email" class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
+                            <input type="email" id="login-email" required autocomplete="email" placeholder="you@example.com"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                        </div>
+                        <div class="mb-4">
+                            <label for="login-password" class="block text-sm font-semibold text-gray-700 mb-1">Пароль</label>
+                            <input type="password" id="login-password" required autocomplete="current-password" placeholder="••••••••"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                        </div>
+                        <div id="login-error" class="hidden text-red-600 text-sm mt-2 mb-2"></div>
+                        <button type="submit" id="login-btn"
+                                class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition">
+                            Войти
+                        </button>
+                        <p class="text-center text-sm text-gray-600 mt-4">
+                            Нет аккаунта?
+                            <a href="#" onclick="showAuthForm('register'); return false;" class="text-blue-600 hover:underline">Зарегистрироваться</a>
+                        </p>
+                    </form>
+
+                    <!-- Форма регистрации -->
+                    <form id="register-form" class="hidden" onsubmit="handleRegister(event)">
+                        <div class="mb-4">
+                            <label for="register-email" class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
+                            <input type="email" id="register-email" required autocomplete="email" placeholder="you@example.com"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                        </div>
+                        <div class="mb-4">
+                            <label for="register-password" class="block text-sm font-semibold text-gray-700 mb-1">Пароль</label>
+                            <input type="password" id="register-password" required autocomplete="new-password" minlength="6" placeholder="Минимум 6 символов"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                        </div>
+                        <div class="mb-4">
+                            <label for="register-password2" class="block text-sm font-semibold text-gray-700 mb-1">Подтвердите пароль</label>
+                            <input type="password" id="register-password2" required autocomplete="new-password" placeholder="Повторите пароль"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                        </div>
+                        <div id="register-error" class="hidden text-red-600 text-sm mt-2 mb-2"></div>
+                        <button type="submit" id="register-btn"
+                                class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition">
+                            Зарегистрироваться
+                        </button>
+                        <p class="text-center text-sm text-gray-600 mt-4">
+                            Уже есть аккаунт?
+                            <a href="#" onclick="showAuthForm('login'); return false;" class="text-blue-600 hover:underline">Войти</a>
+                        </p>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== ЛИЧНЫЙ КАБИНЕТ ==================== -->
+        <div id="dashboard-section" class="section hidden container mx-auto px-4 py-8">
+            <div class="max-w-4xl mx-auto">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-900">Личный кабинет</h1>
+                        <p class="text-gray-600 mt-1">
+                            <i class="fas fa-envelope text-gray-400 mr-1"></i>
+                            <span id="user-email" class="font-semibold text-gray-800"></span>
+                        </p>
+                    </div>
+                    <div class="flex gap-3 flex-wrap">
+                        <a href="index.html#tariffs"
+                           class="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold border-2 border-blue-600 hover:bg-blue-50 transition">
+                            <i class="fas fa-shopping-cart mr-2"></i>Купить VPN
+                        </a>
+                        <button onclick="handleLogout()"
+                                class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-300 transition">
+                            <i class="fas fa-sign-out-alt mr-2"></i>Выйти
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">Мои подписки</h2>
+                    <button onclick="loadSubscriptions()" title="Обновить"
+                            class="w-10 h-10 rounded-lg bg-white shadow-sm text-gray-500 hover:text-blue-600 hover:shadow transition flex items-center justify-center">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+
+                <div id="subscriptions-container">
+                    <!-- Карточки подписок рендерятся из JS -->
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900 text-white py-8 mt-12">
+        <div class="container mx-auto px-4 text-center">
+            <p class="text-gray-400 text-sm mb-2">
+                Средства не возвращаются — услуга считается оказанной в момент получения ключа.
+            </p>
+            <p class="text-gray-400 text-sm">
+                © 2026 AWX VPN. Все права защищены.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Модальное окно с ключом -->
+    <div id="key-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-2xl font-bold text-gray-900">Ключ подписки</h3>
+                <button onclick="closeKeyModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-2xl"></i>
+                </button>
+            </div>
+            <div id="key-modal-content">
+                <!-- Контент задаётся из JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000'; // Измените на ваш домен
+        const TOKEN_KEY = 'awx_token';
+
+        // ————————————————— УТИЛИТЫ —————————————————
+
+        function getToken() {
+            return localStorage.getItem(TOKEN_KEY);
+        }
+
+        function setToken(token) {
+            localStorage.setItem(TOKEN_KEY, token);
+        }
+
+        function clearToken() {
+            localStorage.removeItem(TOKEN_KEY);
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        async function apiFetch(path, options = {}) {
+            const headers = Object.assign({}, options.headers);
+            const token = getToken();
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+
+            let resp;
+            try {
+                resp = await fetch(API_BASE + path, Object.assign({}, options, { headers }));
+            } catch (e) {
+                throw new Error('Не удалось соединиться с сервером');
+            }
+
+            let data = null;
+            try { data = await resp.json(); } catch (e) { /* пустой ответ */ }
+
+            if (!resp.ok) {
+                const message = (data && (data.detail || data.message)) || ('Ошибка сервера (' + resp.status + ')');
+                const err = new Error(message);
+                err.status = resp.status;
+                throw err;
+            }
+            return data;
+        }
+
+        function showSection(id) {
+            ['auth-section', 'dashboard-section'].forEach(s => {
+                document.getElementById(s).classList.add('hidden');
+            });
+            document.getElementById(id).classList.remove('hidden');
+        }
+
+        function showAuthSection() {
+            showSection('auth-section');
+            showAuthForm('login');
+        }
+
+        function showToast(message, type) {
+            type = type || 'success';
+            let toast = document.getElementById('toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'toast';
+                toast.className = 'fixed bottom-6 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-lg text-white font-semibold shadow-lg z-[60] transition-opacity duration-300';
+                document.body.appendChild(toast);
+            }
+            toast.style.background = type === 'success' ? '#16a34a' : '#dc2626';
+            toast.textContent = message;
+            toast.style.opacity = '1';
+            clearTimeout(window._toastTimer);
+            window._toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 3500);
+        }
+
+        function setButtonLoading(btnId, loading, loadingText) {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            if (loading) {
+                btn.dataset.original = btn.innerHTML;
+                btn.disabled = true;
+                btn.classList.add('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = '<span class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></span>' + loadingText;
+            } else {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                if (btn.dataset.original) {
+                    btn.innerHTML = btn.dataset.original;
+                    delete btn.dataset.original;
+                }
+            }
+        }
+
+        function showAuthError(id, message) {
+            const el = document.getElementById(id);
+            el.textContent = message;
+            el.classList.remove('hidden');
+        }
+
+        function hideAuthError(id) {
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        // ————————————————— ПЕРЕКЛЮЧЕНИЕ ФОРМ —————————————————
+
+        function showAuthForm(form) {
+            const isLogin = form === 'login';
+            document.getElementById('login-form').classList.toggle('hidden', !isLogin);
+            document.getElementById('register-form').classList.toggle('hidden', isLogin);
+
+            const tabLogin = document.getElementById('tab-login');
+            const tabRegister = document.getElementById('tab-register');
+            tabLogin.classList.toggle('tab-active', isLogin);
+            tabLogin.classList.toggle('tab-inactive', !isLogin);
+            tabRegister.classList.toggle('tab-active', !isLogin);
+            tabRegister.classList.toggle('tab-inactive', isLogin);
+
+            hideAuthError('login-error');
+            hideAuthError('register-error');
+        }
+
+        // ————————————————— ВХОД / РЕГИСТРАЦИЯ —————————————————
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('login-email').value.trim();
+            const password = document.getElementById('login-password').value;
+            hideAuthError('login-error');
+
+            setButtonLoading('login-btn', true, 'Вход...');
+            try {
+                const data = await apiFetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                setToken(data.token);
+                await enterDashboard();
+            } catch (err) {
+                showAuthError('login-error', err.message);
+            } finally {
+                setButtonLoading('login-btn', false);
+            }
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const email = document.getElementById('register-email').value.trim();
+            const password = document.getElementById('register-password').value;
+            const password2 = document.getElementById('register-password2').value;
+            hideAuthError('register-error');
+
+            if (password.length < 6) {
+                showAuthError('register-error', 'Пароль должен быть не короче 6 символов');
+                return;
+            }
+            if (password !== password2) {
+                showAuthError('register-error', 'Пароли не совпадают');
+                return;
+            }
+
+            setButtonLoading('register-btn', true, 'Регистрация...');
+            try {
+                const data = await apiFetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                setToken(data.token);
+                await enterDashboard();
+            } catch (err) {
+                showAuthError('register-error', err.message);
+            } finally {
+                setButtonLoading('register-btn', false);
+            }
+        }
+
+        function handleLogout() {
+            clearToken();
+            showAuthSection();
+            document.getElementById('login-password').value = '';
+        }
+
+        // ————————————————— КАБИНЕТ —————————————————
+
+        const TARIFF_NAMES = {
+            quantum_month: 'Quantum Месяц',
+            quantum_quarter: 'Quantum 3 Месяца',
+            quantum_halfyear: 'Quantum 6 Месяцев',
+            quantum_year: 'Quantum 12 Месяцев'
+        };
+
+        let subscriptionsCache = [];
+
+        function tariffName(sub) {
+            const slug = sub.tariff || sub.tariff_slug || sub.plan || '';
+            if (TARIFF_NAMES[slug]) return TARIFF_NAMES[slug];
+            return sub.tariff_name || sub.tariff_title || sub.name || sub.title || (slug ? slug : 'Подписка');
+        }
+
+        function normalizeSubscription(sub) {
+            return {
+                id: String(sub.id || sub.subscription_id || sub.order_id || ''),
+                tariff_name: tariffName(sub),
+                status: String(sub.status || sub.subscription_status || 'unknown').toLowerCase(),
+                expires_at: sub.expires_at || sub.expiration_date || sub.expiry_date || sub.expires || '',
+                sub_url: sub.sub_url || sub.subscription_url || sub.link || sub.url || '',
+                qr_base64: sub.qr_base64 || sub.qr_code || sub.qr || ''
+            };
+        }
+
+        function getStatusInfo(sub) {
+            let status = sub.status;
+            let label, colorClass;
+
+            if (['active', 'paid', 'ok', 'success'].includes(status)) {
+                status = 'active'; label = 'Активна'; colorClass = 'bg-green-100 text-green-700';
+            } else if (['expired', 'ended'].includes(status)) {
+                status = 'expired'; label = 'Истекла'; colorClass = 'bg-gray-100 text-gray-600';
+            } else if (['pending', 'created', 'awaiting', 'awaiting_payment'].includes(status)) {
+                status = 'pending'; label = 'Ожидает'; colorClass = 'bg-yellow-100 text-yellow-700';
+            } else {
+                // Неизвестный статус — определяем по дате истечения
+                if (sub.expires_at) {
+                    const d = new Date(String(sub.expires_at).replace(' ', 'T'));
+                    if (!isNaN(d.getTime())) {
+                        status = d.getTime() > Date.now() ? 'active' : 'expired';
+                    } else {
+                        status = 'pending';
+                    }
+                } else {
+                    status = 'pending';
+                }
+                if (status === 'active') { label = 'Активна'; colorClass = 'bg-green-100 text-green-700'; }
+                else if (status === 'expired') { label = 'Истекла'; colorClass = 'bg-gray-100 text-gray-600'; }
+                else { label = 'Ожидает'; colorClass = 'bg-yellow-100 text-yellow-700'; }
+            }
+
+            return { status, label, colorClass };
+        }
+
+        function formatDate(value) {
+            if (!value) return '—';
+            const str = String(value);
+            const date = new Date(str.includes(' ') ? str.replace(' ', 'T') : str);
+            if (isNaN(date.getTime())) return escapeHtml(str);
+            return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+
+        function qrSrc(qr) {
+            if (!qr) return '';
+            const s = String(qr);
+            return s.startsWith('data:') ? s : 'data:image/png;base64,' + s;
+        }
+
+        async function enterDashboard() {
+            showSection('dashboard-section');
+            document.getElementById('user-email').textContent = '';
+
+            try {
+                const me = await apiFetch('/api/auth/me');
+                if (me && me.email) document.getElementById('user-email').textContent = me.email;
+            } catch (e) {
+                if (e.status === 401) {
+                    clearToken();
+                    showAuthSection();
+                    return;
+                }
+            }
+
+            await loadSubscriptions();
+        }
+
+        function extractSubscriptions(data) {
+            if (Array.isArray(data)) return data;
+            if (data && Array.isArray(data.items)) return data.items;
+            if (data && Array.isArray(data.subscriptions)) return data.subscriptions;
+            if (data && Array.isArray(data.orders)) return data.orders;
+            return [];
+        }
+
+        async function loadSubscriptions() {
+            const container = document.getElementById('subscriptions-container');
+            container.innerHTML = `
+                <div class="text-center py-16">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p class="mt-4 text-gray-600">Загрузка подписок...</p>
+                </div>
+            `;
+
+            try {
+                const data = await apiFetch('/api/account/subscriptions');
+                const subs = extractSubscriptions(data).map(normalizeSubscription);
+                subscriptionsCache = subs;
+                renderSubscriptions(subs);
+            } catch (e) {
+                if (e.status === 401) {
+                    clearToken();
+                    showAuthSection();
+                    return;
+                }
+                container.innerHTML = `
+                    <div class="bg-white rounded-2xl shadow-sm p-10 text-center">
+                        <i class="fas fa-exclamation-circle text-red-500 text-4xl mb-4"></i>
+                        <p class="text-red-600 font-semibold mb-2">Не удалось загрузить подписки</p>
+                        <p class="text-gray-500 text-sm mb-6">${escapeHtml(e.message)}</p>
+                        <button onclick="loadSubscriptions()" class="bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition">
+                            Повторить
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        function renderSubscriptions(subs) {
+            const container = document.getElementById('subscriptions-container');
+
+            if (!subs.length) {
+                container.innerHTML = `
+                    <div class="bg-white rounded-2xl shadow-sm p-12 text-center border border-gray-100">
+                        <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i class="fas fa-box-open text-blue-600 text-2xl"></i>
+                        </div>
+                        <h3 class="text-xl font-semibold text-gray-900 mb-2">У вас пока нет подписок</h3>
+                        <p class="text-gray-600 mb-6">Купите VPN на главной странице.</p>
+                        <a href="index.html#tariffs" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition">
+                            Купить VPN
+                        </a>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = subs.map(sub => {
+                const si = getStatusInfo(sub);
+                return `
+                    <div class="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 mb-4">
+                        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div class="flex items-start gap-4">
+                                <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                                    <i class="fas fa-key text-blue-600 text-xl"></i>
+                                </div>
+                                <div>
+                                    <div class="flex items-center gap-3 flex-wrap">
+                                        <h3 class="text-lg font-bold text-gray-900">${escapeHtml(sub.tariff_name)}</h3>
+                                        <span class="px-3 py-0.5 rounded-full text-sm font-semibold ${si.colorClass}">${si.label}</span>
+                                    </div>
+                                    <p class="text-sm text-gray-500 mt-1">
+                                        <i class="far fa-calendar-alt mr-1"></i>
+                                        Действует до: ${formatDate(sub.expires_at)}
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="flex gap-3 flex-wrap">
+                                <button data-action="show-key" data-id="${escapeHtml(sub.id)}"
+                                        class="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition">
+                                    <i class="fas fa-eye mr-2"></i>Показать ключ
+                                </button>
+                                ${si.status === 'active' ? `
+                                <button data-action="renew" data-id="${escapeHtml(sub.id)}"
+                                        class="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold border-2 border-blue-600 hover:bg-blue-50 transition">
+                                    <i class="fas fa-sync-alt mr-2"></i>Продлить
+                                </button>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // ————————————————— МОДАЛЬНОЕ ОКНО С КЛЮЧОМ —————————————————
+
+        let currentSubUrl = '';
+
+        function openKeyModal() {
+            document.getElementById('key-modal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeKeyModal() {
+            document.getElementById('key-modal').classList.add('hidden');
+            document.body.style.overflow = '';
+            currentSubUrl = '';
+        }
+
+        async function showKey(id) {
+            openKeyModal();
+            document.getElementById('key-modal-content').innerHTML = `
+                <div class="text-center py-10">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p class="mt-4 text-gray-600">Загрузка ключа...</p>
+                </div>
+            `;
+
+            try {
+                const data = await apiFetch('/api/account/subscription/' + encodeURIComponent(id));
+                const sub = normalizeSubscription(data);
+                if (!sub.sub_url) throw new Error('Ключ для этой подписки пока недоступен');
+                renderKeyModal(sub);
+            } catch (e) {
+                // Запасной вариант: используем данные из списка подписок
+                const cached = subscriptionsCache.find(s => s.id === String(id));
+                if (cached && cached.sub_url) {
+                    renderKeyModal(cached);
+                    return;
+                }
+                document.getElementById('key-modal-content').innerHTML = `
+                    <div class="text-center text-red-600 py-8">
+                        <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
+                        <p class="font-semibold mb-2">Не удалось получить ключ</p>
+                        <p class="text-sm text-gray-500 mb-2">${escapeHtml(e.message)}</p>
+                        <button onclick="closeKeyModal()" class="mt-4 bg-gray-200 px-6 py-2 rounded-lg hover:bg-gray-300 transition">
+                            Закрыть
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        function renderKeyModal(sub) {
+            currentSubUrl = sub.sub_url || '';
+            document.getElementById('key-modal-content').innerHTML = `
+                <div class="text-center mb-6">
+                    <h4 class="font-bold text-lg text-gray-900">${escapeHtml(sub.tariff_name)}</h4>
+                    <p class="text-sm text-gray-500 mt-1">Отсканируйте QR-код или скопируйте ссылку подписки</p>
+                </div>
+                ${sub.qr_base64 ? `
+                <div class="flex justify-center mb-6">
+                    <img src="${qrSrc(sub.qr_base64)}" alt="QR Code" class="w-48 h-48 border-4 border-gray-200 rounded-lg">
+                </div>` : ''}
+                <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ссылка подписки</span>
+                        <button onclick="copySubUrl()" class="text-blue-600 hover:text-blue-700 text-sm font-semibold">
+                            <i class="fas fa-copy mr-1"></i>Скопировать
+                        </button>
+                    </div>
+                    <a href="${escapeHtml(sub.sub_url)}" target="_blank" rel="noopener noreferrer"
+                       class="text-blue-600 text-sm break-all hover:underline">${escapeHtml(sub.sub_url)}</a>
+                </div>
+                <div class="bg-yellow-50 border-l-4 border-yellow-500 p-3 mb-4 rounded-r">
+                    <p class="text-xs text-yellow-700">
+                        Если вы видите только одну ссылку — при импорте в приложение (v2rayNG, Hiddify, V2Ray Tun) появятся все серверы.
+                    </p>
+                </div>
+                <button onclick="closeKeyModal()"
+                        class="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition">
+                    Закрыть
+                </button>
+            `;
+        }
+
+        async function copySubUrl() {
+            if (!currentSubUrl) return;
+            try {
+                await navigator.clipboard.writeText(currentSubUrl);
+            } catch (e) {
+                const ta = document.createElement('textarea');
+                ta.value = currentSubUrl;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            showToast('Ссылка скопирована');
+        }
+
+        // ————————————————— ПРОДЛЕНИЕ —————————————————
+
+        async function renewSubscription(id, btn) {
+            const original = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = '<span class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent mr-2"></span>Продление...';
+            }
+            try {
+                const data = await apiFetch('/api/account/renew/' + encodeURIComponent(id), { method: 'POST' });
+                if (data && data.payment_url) {
+                    window.location.href = data.payment_url;
+                    return;
+                }
+                showToast((data && data.message) || 'Подписка успешно продлена');
+                await loadSubscriptions();
+            } catch (e) {
+                showToast('Не удалось продлить: ' + e.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                    btn.innerHTML = original;
+                }
+            }
+        }
+
+        // ————————————————— СОБЫТИЯ —————————————————
+
+        // Делегирование кликов по кнопкам в карточках подписок
+        document.getElementById('subscriptions-container').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const action = btn.dataset.action;
+            const id = btn.dataset.id;
+            if (action === 'show-key') showKey(id);
+            else if (action === 'renew') renewSubscription(id, btn);
+        });
+
+        // Закрытие модалки по клику на подложку
+        document.getElementById('key-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closeKeyModal();
+        });
+
+        // Закрытие модалки по Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeKeyModal();
+        });
+
+        // ————————————————— ИНИЦИАЛИЗАЦИЯ —————————————————
+
+        async function init() {
+            if (getToken()) {
+                await enterDashboard();
+            } else {
+                showAuthSection();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Admin panel
     admin_api_key: str = ""  # X-Admin-Key для /admin/* — задаётся через ADMIN_API_KEY
 
+    # JWT Auth
+    jwt_secret: str = "change-me-in-production-use-random-string"
+    jwt_expire_hours: int = 720  # 30 дней
+
     # Тарифы: slug → (дней, цена в RUB, название, кол-во устройств, скидка %)
     tariffs: dict = {
         "quantum_month": {"days": 31, "price": 300, "title": "Quantum Месяц", "devices": 5, "discount": 0},

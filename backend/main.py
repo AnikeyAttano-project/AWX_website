@@ -7,11 +7,12 @@ import html
 import json
 import qrcode
 import base64
+import aiosqlite
 from contextlib import asynccontextmanager
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, APIRouter, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from config import settings
 from database import (
     init_db, create_order, get_order, save_platega_tx,
     mark_paid, save_subscription, get_order_by_tx, mark_order_error,
+    get_user_subscriptions, get_user_order, set_order_user,
 )
 from platega_client import create_payment, check_status, PlategaError
 from xui_client import (
@@ -28,6 +30,7 @@ from xui_client import (
     XuiError,
 )
 from admin import admin_router
+from auth import auth_router, get_optional_user
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -124,6 +127,89 @@ async def add_security_headers(request: Request, call_next):
 # Маршруты /admin/* — защищены заголовком X-Admin-Key (см. admin.py)
 app.include_router(admin_router)
 
+# ————————————————— АВТОРИЗАЦИЯ —————————————————
+# Маршруты /api/auth/* — register, login, me
+app.include_router(auth_router)
+
+# ————————————————— ЛИЧНЫЙ КАБИНЕТ —————————————————
+# Маршруты /api/account/* — подписки, ключи, продление
+account_router = APIRouter(prefix="/api/account", tags=["account"])
+
+
+@account_router.get("/subscriptions")
+async def get_subscriptions(user: dict = Depends(get_optional_user)):
+    """Список подписок пользователя. Требует авторизации."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    orders = await get_user_subscriptions(user["id"])
+    return [
+        {
+            "order_id": o["id"],
+            "tariff": o["tariff"],
+            "status": o["status"],
+            "sub_url": o.get("sub_url"),
+            "expires_at": o.get("expires_at"),
+            "created_at": o["created_at"],
+        }
+        for o in orders
+    ]
+
+
+@account_router.get("/subscription/{order_id}")
+async def get_subscription_detail(order_id: str, user: dict = Depends(get_optional_user)):
+    """Детали подписки + QR-код. Требует авторизации."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    result = {
+        "order_id": order["id"],
+        "tariff": order["tariff"],
+        "status": order["status"],
+        "sub_url": order.get("sub_url"),
+        "expires_at": order.get("expires_at"),
+        "created_at": order["created_at"],
+    }
+    if order.get("sub_url"):
+        result["qr_base64"] = _make_qr_base64(order["sub_url"])
+    return result
+
+
+@account_router.post("/renew/{order_id}")
+async def renew_subscription(order_id: str, user: dict = Depends(get_optional_user)):
+    """Продление подписки. Требует авторизации."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    if not order.get("xui_email"):
+        raise HTTPException(400, "Нет привязки к 3x-UI клиенту")
+
+    tariff = settings.tariffs.get(order["tariff"])
+    days = tariff["days"] if tariff else 30
+
+    try:
+        result = await renew_client(order["xui_email"], days)
+        # Обновляем expires_at в БД
+        new_expires = datetime.utcfromtimestamp(result["new_expiry_ms"] / 1000).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        async with aiosqlite.connect(settings.database_path) as db:
+            await db.execute(
+                "UPDATE orders SET expires_at = ? WHERE id = ?",
+                (new_expires, order_id),
+            )
+            await db.commit()
+        return {"ok": True, "new_expires_at": new_expires}
+    except XuiError as e:
+        logger.error("Renew failed for order %s: %s", order_id, e)
+        raise HTTPException(500, f"Ошибка продления: {e}")
+
+
+app.include_router(account_router)
+
 
 # ————————————————— МОДЕЛИ —————————————————
 
@@ -143,10 +229,11 @@ async def list_tariffs():
 
 
 @app.post("/api/order/create")
-async def api_create_order(req: CreateOrderRequest, request: Request):
+async def api_create_order(req: CreateOrderRequest, request: Request, user: dict = Depends(get_optional_user)):
     """
     Шаг 1: пользователь выбирает тариф.
     Создаёт заказ в БД и платёжную ссылку в Platega.
+    Если пользователь авторизован — привязывает заказ к аккаунту.
     """
     # Rate limiting: 10 заказов в час с одного IP
     client_ip = request.client.host
@@ -172,6 +259,10 @@ async def api_create_order(req: CreateOrderRequest, request: Request):
         raise HTTPException(502, str(e))
 
     await save_platega_tx(order_id, payment["transaction_id"])
+
+    # Привязываем заказ к пользователю, если авторизован
+    if user:
+        await set_order_user(order_id, user["id"])
 
     return {
         "order_id": order_id,

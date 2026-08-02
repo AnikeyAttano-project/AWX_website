@@ -6,3 +6,6 @@ pydantic-settings>=2.0.0
 qrcode[pil]>=7.4.0
 aiosqlite>=0.20.0
 python-dotenv>=1.0.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=3.1.0,<4.1  # passlib 1.7.4 incompatible with bcrypt >= 4.1
+python-jose[cryptography]>=3.3.0
