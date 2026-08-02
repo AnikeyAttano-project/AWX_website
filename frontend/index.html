@@ -1,364 +1,445 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AWX VPN — Быстрый и безопасный VPN</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AWX VPN — Приватный доступ в сеть</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F3F2EE;
+    --surface:#FFFFFF;
+    --border:#E7E5E0;
+    --text:#191815;
+    --text-2:#6B6862;
+    --text-3:#9A968D;
+    --accent:#1F5F52;
+    --accent-bg:#EAF1EE;
+    --glass-bg:rgba(255,255,255,.45);
+    --glass-border:rgba(255,255,255,.7);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:'Manrope',sans-serif;-webkit-font-smoothing:antialiased;
+    position:relative;overflow-x:hidden;
+  }
+  .blob{position:fixed;border-radius:50%;filter:blur(70px);z-index:0;pointer-events:none;}
+  .blob-1{width:420px;height:420px;background:#C7C6C0;top:-120px;left:-100px;opacity:.55;}
+  .blob-2{width:380px;height:380px;background:#9B9A94;top:60px;right:-140px;opacity:.5;}
+  .blob-3{width:360px;height:360px;background:#5B5B57;bottom:10%;left:20%;opacity:.35;}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px;}
+
+  /* Header */
+  header{
+    position:sticky;top:0;z-index:10;
+    background:var(--glass-bg);
+    backdrop-filter:blur(20px) saturate(160%);
+    -webkit-backdrop-filter:blur(20px) saturate(160%);
+    border-bottom:1px solid var(--glass-border);
+  }
+  nav{display:flex;align-items:center;justify-content:space-between;padding:18px 0;}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;letter-spacing:-.01em;text-decoration:none;color:var(--text);}
+  .logo-mark{width:22px;height:22px;flex-shrink:0;}
+  .nav-links{display:flex;align-items:center;gap:36px;}
+  .nav-links a{color:var(--text-2);text-decoration:none;font-size:14px;font-weight:500;transition:color .15s;}
+  .nav-links a:hover{color:var(--text);}
+  .nav-actions{display:flex;align-items:center;gap:10px;}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    padding:9px 18px;border-radius:6px;font-size:14px;font-weight:600;
+    text-decoration:none;border:1px solid transparent;transition:all .15s;cursor:pointer;
+  }
+  .btn-ghost{color:var(--text-2);}
+  .btn-ghost:hover{color:var(--text);}
+  .btn-dark{background:var(--text);color:#fff;}
+  .btn-dark:hover{background:#000;}
+  .btn-outline{border:1px solid var(--border);color:var(--text);}
+  .btn-outline:hover{border-color:var(--text-3);}
+  .btn-glass{
+    background:var(--glass-bg);border:1px solid var(--glass-border);color:var(--text);
+    backdrop-filter:blur(16px);box-shadow:0 4px 18px rgba(30,30,20,.06);
+  }
+  .btn-glass:hover{background:rgba(255,255,255,.65);}
+
+  /* Hero */
+  .hero{position:relative;z-index:1;padding:130px 0 110px;text-align:center;}
+  .hero-brand{font-size:15px;font-weight:600;color:var(--text-2);letter-spacing:.01em;margin-bottom:18px;}
+  h1{font-weight:700;font-size:50px;line-height:1.12;letter-spacing:-.025em;margin:0 0 34px;max-width:640px;margin-left:auto;margin-right:auto;}
+  .hero-ctas{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;}
+  .btn-lg{padding:13px 26px;font-size:15px;border-radius:10px;}
+
+  /* Features */
+  section.features{position:relative;z-index:1;padding:70px 0 100px;}
+  .section-head{max-width:480px;margin:0 auto 56px;text-align:center;}
+  .section-head h2{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:0 0 10px;}
+  .section-head p{color:var(--text-2);font-size:15px;margin:0;}
+  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+  .feat{
+    padding:28px 26px;border-radius:16px;
+    background:var(--glass-bg);border:1px solid var(--glass-border);
+    backdrop-filter:blur(18px);box-shadow:0 4px 20px rgba(30,30,20,.05);
+    transition:transform .15s,box-shadow .15s;
+  }
+  .feat:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(30,30,20,.08);}
+  .feat-icon{margin-bottom:16px;color:var(--accent);}
+  .feat-title{font-weight:700;font-size:15px;margin-bottom:6px;}
+  .feat-desc{font-size:13.5px;color:var(--text-2);line-height:1.5;}
+
+  /* Tariffs */
+  section.tariffs{position:relative;z-index:1;padding:70px 0 100px;}
+  .tariff-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+  .tariff{
+    padding:32px 28px;border-radius:16px;text-align:center;
+    background:var(--surface);border:1px solid var(--border);
+    box-shadow:0 4px 20px rgba(30,30,20,.04);
+    transition:transform .15s,box-shadow .15s;position:relative;
+  }
+  .tariff:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(30,30,20,.08);}
+  .tariff.popular{border-color:var(--accent);box-shadow:0 4px 20px rgba(31,95,82,.1);}
+  .tariff-badge{
+    position:absolute;top:-10px;left:50%;transform:translateX(-50%);
+    background:var(--accent);color:#fff;font-size:11px;font-weight:700;
+    padding:4px 12px;border-radius:20px;letter-spacing:.03em;
+  }
+  .tariff-name{font-size:18px;font-weight:700;margin-bottom:8px;}
+  .tariff-price{font-size:36px;font-weight:700;color:var(--accent);margin-bottom:4px;}
+  .tariff-period{font-size:13px;color:var(--text-3);margin-bottom:24px;}
+  .tariff-features{text-align:left;margin-bottom:28px;}
+  .tariff-features li{
+    display:flex;align-items:center;gap:10px;
+    font-size:13.5px;color:var(--text-2);padding:6px 0;
+    list-style:none;
+  }
+  .tariff-features li svg{flex-shrink:0;color:var(--accent);}
+  .tariff .btn{width:100%;padding:12px;font-size:14px;border-radius:8px;}
+
+  /* FAQ */
+  section.faq{position:relative;z-index:1;padding:70px 0 100px;}
+  .faq-item{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;margin-bottom:12px;overflow:hidden;
+  }
+  .faq-q{
+    padding:18px 24px;cursor:pointer;font-weight:600;font-size:15px;
+    display:flex;justify-content:space-between;align-items:center;
+    transition:background .15s;
+  }
+  .faq-q:hover{background:var(--accent-bg);}
+  .faq-q svg{transition:transform .2s;flex-shrink:0;}
+  .faq-a{padding:0 24px 18px;font-size:14px;color:var(--text-2);line-height:1.6;}
+  details.faq-item summary{list-style:none;cursor:pointer;}
+  details.faq-item summary::-webkit-details-marker{display:none;}
+
+  /* Footer */
+  footer{position:relative;z-index:1;padding:40px 0;border-top:1px solid var(--border);}
+  .footer-inner{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;}
+  .footer-links{display:flex;gap:24px;}
+  .footer-links a{color:var(--text-3);text-decoration:none;font-size:13px;transition:color .15s;}
+  .footer-links a:hover{color:var(--text);}
+  .footer-copy{font-size:13px;color:var(--text-3);}
+
+  /* Modal */
+  .modal-overlay{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);
+    backdrop-filter:blur(4px);z-index:100;align-items:center;justify-content:center;padding:24px;
+  }
+  .modal-overlay.active{display:flex;}
+  .modal{
+    background:var(--surface);border-radius:16px;padding:32px;max-width:420px;width:100%;
+    box-shadow:0 20px 60px rgba(0,0,0,.15);position:relative;
+  }
+  .modal-close{
+    position:absolute;top:16px;right:16px;background:none;border:none;
+    cursor:pointer;color:var(--text-3);font-size:20px;
+  }
+  .modal-close:hover{color:var(--text);}
+
+  @media(max-width:820px){
+    h1{font-size:34px;}
+    .nav-links{display:none;}
+    .feat-grid,.tariff-grid{grid-template-columns:1fr;}
+    .hero{padding:80px 0 60px;}
+  }
+</style>
 </head>
-<body class="bg-gray-50">
-    <!-- Header -->
-    <header class="bg-white shadow-sm">
-        <nav class="container mx-auto px-4 py-4 flex justify-between items-center">
-            <div class="flex items-center space-x-2">
-                <i class="fas fa-shield-alt text-blue-600 text-2xl"></i>
-                <span class="text-xl font-bold text-gray-800">AWX VPN</span>
-            </div>
-            <div class="hidden md:flex space-x-6">
-                <a href="#features" class="text-gray-600 hover:text-blue-600">Возможности</a>
-                <a href="#tariffs" class="text-gray-600 hover:text-blue-600">Тарифы</a>
-                <a href="#faq" class="text-gray-600 hover:text-blue-600">FAQ</a>
-                <a href="/account.html" class="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg hover:bg-blue-200 transition font-semibold">
-                    <i class="fas fa-user-circle mr-1"></i>Личный кабинет
-                </a>
-            </div>
-            <div class="flex items-center space-x-3">
-                <a href="/account.html" class="bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition font-semibold text-sm md:hidden">
-                    <i class="fas fa-user-circle mr-1"></i>Войти
-                </a>
-                <a href="#tariffs" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
-                    Попробовать
-                </a>
-            </div>
-        </nav>
-    </header>
+<body>
 
-    <!-- Hero Section -->
-    <section class="bg-gradient-to-br from-blue-600 to-blue-800 text-white py-16 md:py-24">
-        <div class="container mx-auto px-4">
-            <div class="max-w-4xl mx-auto text-center">
-                <h1 class="text-4xl md:text-6xl font-bold mb-6">
-                    🛡️ AWX VPN
-                </h1>
-                <p class="text-2xl md:text-3xl font-light mb-4">
-                    Твой приватный доступ в сеть
-                </p>
-                <p class="text-lg text-blue-100 mb-10 max-w-2xl mx-auto">
-                    Быстрый, безопасный и конфиденциальный доступ к сети.<br>
-                    Надёжное шифрование данных и высокая скорость работы.
-                </p>
-                <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                    <a href="#tariffs" class="bg-white text-blue-600 px-8 py-4 rounded-xl text-lg font-bold hover:bg-blue-50 transition shadow-lg">
-                        Подключить VPN
-                    </a>
-                    <a href="#features" class="border-2 border-white text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-white/10 transition">
-                        Узнать больше
-                    </a>
-            </div>
-        </div>
-    </section>
+<div class="blob blob-1"></div>
+<div class="blob blob-2"></div>
+<div class="blob blob-3"></div>
 
-    <!-- Features Section -->
-    <section id="features" class="py-16">
-        <div class="container mx-auto px-4">
-            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-4">
-                Наши преимущества
-            </h2>
-            <p class="text-center text-gray-500 mb-12">Почему выбирают нас</p>
-            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
-                <div class="flex items-start p-5 bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition">
-                    <div class="w-11 h-11 bg-green-50 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
-                        <i class="fas fa-eye-slash text-green-600"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-900 mb-1">No-Logs</h3>
-                        <p class="text-gray-500 text-sm">Не храним историю и данные</p>
-                    </div>
-                </div>
-                <div class="flex items-start p-5 bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition">
-                    <div class="w-11 h-11 bg-blue-50 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
-                        <i class="fas fa-tachometer-alt text-blue-600"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-900 mb-1">1 Gbps</h3>
-                        <p class="text-gray-500 text-sm">Высокий приоритет и стабильность</p>
-                    </div>
-                </div>
-                <div class="flex items-start p-5 bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition">
-                    <div class="w-11 h-11 bg-purple-50 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
-                        <i class="fas fa-laptop text-purple-600"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-900 mb-1">Все устройства</h3>
-                        <p class="text-gray-500 text-sm">iOS, Android, Windows, macOS</p>
-                    </div>
-                </div>
-                <div class="flex items-start p-5 bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition">
-                    <div class="w-11 h-11 bg-orange-50 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
-                        <i class="fas fa-gamepad text-orange-600"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-900 mb-1">Игровой режим</h3>
-                        <p class="text-gray-500 text-sm">Минимальная задержка и потери</p>
-                    </div>
-                </div>
-                <div class="flex items-start p-5 bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition">
-                    <div class="w-11 h-11 bg-red-50 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
-                        <i class="fas fa-globe text-red-600"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-900 mb-1">Авто-регион</h3>
-                        <p class="text-gray-500 text-sm">Автоматический выбор сервера</p>
-                    </div>
-                </div>
-                <div class="flex items-start p-5 bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition">
-                    <div class="w-11 h-11 bg-yellow-50 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
-                        <i class="fas fa-shield-alt text-yellow-600"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-900 mb-1">Двойной туннель</h3>
-                        <p class="text-gray-500 text-sm">Смарт-сеть, без рекламы YouTube</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
+<header>
+  <div class="wrap">
+    <nav>
+      <a href="/" class="logo">
+        <svg class="logo-mark" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2L4 5v6c0 5.2 3.4 9.4 8 11 4.6-1.6 8-5.8 8-11V5l-8-3z" stroke="#191815" stroke-width="1.6" stroke-linejoin="round"/>
+        </svg>
+        AWX VPN
+      </a>
+      <div class="nav-links">
+        <a href="#features">Возможности</a>
+        <a href="#tariffs">Тарифы</a>
+        <a href="#faq">FAQ</a>
+        <a href="/privacy.html">Документы</a>
+      </div>
+      <div class="nav-actions">
+        <a href="/account.html" class="btn btn-ghost">Войти</a>
+        <a href="#tariffs" class="btn btn-dark">Попробовать</a>
+      </div>
+    </nav>
+  </div>
+</header>
 
-    <!-- Tariffs Section -->
-    <section id="tariffs" class="py-16">
-        <div class="container mx-auto px-4">
-            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-12">
-                Выберите свой тариф
-            </h2>
-            <div id="tariffs-container" class="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-                <!-- Тарифы загружаются динамически -->
-            </div>
-        </div>
-    </section>
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-brand">🛡️ AWX VPN</div>
+    <h1>Твой приватный доступ в сеть</h1>
+    <div class="hero-ctas">
+      <a href="#tariffs" class="btn btn-dark btn-lg">Подключить VPN</a>
+      <a href="#features" class="btn btn-glass btn-lg">Как это работает</a>
+    </div>
+  </div>
+</section>
 
-    <!-- FAQ Section -->
-    <section id="faq" class="bg-white py-16">
-        <div class="container mx-auto px-4">
-            <h2 class="text-3xl md:text-4xl font-bold text-center text-gray-900 mb-12">
-                Часто задаваемые вопросы
-            </h2>
-            <div class="max-w-3xl mx-auto space-y-4">
-                <details class="bg-gray-50 rounded-lg p-6" open>
-                    <summary class="font-semibold text-lg cursor-pointer">Как это работает?</summary>
-                    <p class="mt-4 text-gray-600">
-                        1. Выберите тариф и оплатите<br>
-                        2. Получите ссылку подписки и QR-код<br>
-                        3. Установите приложение (v2rayNG, Hiddify, V2Box)<br>
-                        4. Добавьте подписку — готово!
-                    </p>
-                </details>
-                <details class="bg-gray-50 rounded-lg p-6">
-                    <summary class="font-semibold text-lg cursor-pointer">Что вы получаете?</summary>
-                    <ul class="mt-4 text-gray-600 space-y-2">
-                        <li>✅ Ссылку подписки со всеми серверами и протоколами</li>
-                        <li>✅ Высокую скорость соединения</li>
-                        <li>✅ 5 устройств одновременно</li>
-                        <li>✅ Безлимитный трафик</li>
-                    </ul>
-                </details>
-                <details class="bg-gray-50 rounded-lg p-6">
-                    <summary class="font-semibold text-lg cursor-pointer">Важно знать</summary>
-                    <ul class="mt-4 text-gray-600 space-y-2">
-                        <li>⚠️ Если вы видите только одну ссылку — при импорте в приложение (v2rayNG, Hiddify, V2Ray Tun) появятся все 8 серверов.</li>
-                        <li>⚠️ Средства не возвращаются — услуга считается оказанной в момент получения ключа.</li>
-                        <li>⚠️ Каждая покупка создаёт новую подписку — срок действия существующей не продлевается автоматически. Если вам нужно управлять подпиской, используйте тот способ покупки, через который вы её приобрели.</li>
-                    </ul>
-                </details>
-            </div>
-        </div>
-    </section>
+<section class="features" id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Почему AWX VPN</h2>
+      <p>Без лишних обещаний — только то, что действительно важно</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat">
+        <svg class="feat-icon" width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 5v6c0 5.2 3.4 9.4 8 11 4.6-1.6 8-5.8 8-11V5l-8-3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="feat-title">No-logs</div>
+        <div class="feat-desc">Не храним историю подключений и данные трафика.</div>
+      </div>
+      <div class="feat">
+        <svg class="feat-icon" width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        <div class="feat-title">1 Gbps</div>
+        <div class="feat-desc">Высокий приоритет канала и стабильная скорость.</div>
+      </div>
+      <div class="feat">
+        <svg class="feat-icon" width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="12" rx="1.5" stroke="currentColor" stroke-width="1.6"/><path d="M8 20h8M12 16v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <div class="feat-title">Все устройства</div>
+        <div class="feat-desc">iOS, Android, Windows, macOS — одна подписка.</div>
+      </div>
+      <div class="feat">
+        <svg class="feat-icon" width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="2" y="6" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M2 10h20" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div class="feat-title">Игровой режим</div>
+        <div class="feat-desc">Минимальная задержка и потери пакетов.</div>
+      </div>
+      <div class="feat">
+        <svg class="feat-icon" width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9s1.3-6.5 3.8-9z" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div class="feat-title">Авто-регион</div>
+        <div class="feat-desc">Сам выбирает ближайший и самый быстрый сервер.</div>
+      </div>
+      <div class="feat">
+        <svg class="feat-icon" width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 5v6c0 5.2 3.4 9.4 8 11 4.6-1.6 8-5.8 8-11V5l-8-3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="10" r="2" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div class="feat-title">Двойной туннель</div>
+        <div class="feat-desc">Quantum: смарт-сеть, без рекламы на YouTube.</div>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <!-- Footer -->
-    <footer class="bg-gray-900 text-white py-8">
-        <div class="container mx-auto px-4 text-center">
-            <div class="flex justify-center space-x-6 mb-4">
-                <a href="mailto:support@awxvpn.com" class="hover:text-blue-400">
-                    <i class="fas fa-envelope"></i> support@awxvpn.com
-                </a>
-            </div>
-            <p class="text-gray-400 text-sm mb-2">
-                Средства не возвращаются — услуга считается оказанной в момент получения ключа.
-            </p>
-            <p class="text-gray-400 text-sm">
-                © 2026 AWX VPN. Все права защищены.
-            </p>
-        </div>
-    </footer>
+<section class="tariffs" id="tariffs">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Тарифы</h2>
+      <p>Выберите подходящий план</p>
+    </div>
+    <div id="tariff-grid" class="tariff-grid">
+      <!-- Тарифы загружаются динамически -->
+    </div>
+  </div>
+</section>
 
-    <!-- Modal для оплаты -->
-    <div id="payment-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-lg p-8 max-w-md w-full">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-2xl font-bold">Оформление заказа</h3>
-                <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
-                    <i class="fas fa-times text-2xl"></i>
-                </button>
-            </div>
-            <div id="modal-content">
-                <!-- Контент задаётся из JS: спиннер или сообщение об ошибке -->
-            </div>
-        </div>
+<section class="faq" id="faq">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Вопросы и ответы</h2>
     </div>
 
-    <script>
-        const API_BASE = 'http://localhost:8000'; // Измените на ваш домен
+    <details class="faq-item" open>
+      <summary class="faq-q">
+        Как это работает?
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </summary>
+      <div class="faq-a">
+        1. Выберите тариф и оплатите<br>
+        2. Получите ссылку подписки и QR-код<br>
+        3. Установите приложение (v2rayNG, Hiddify, V2Box)<br>
+        4. Добавьте подписку — готово!
+      </div>
+    </details>
 
-        // Спиннер показывается в модалке во время создания заказа
-        const MODAL_SPINNER = `
-            <div class="text-center py-8">
-                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                <p class="mt-4 text-gray-600">Создание заказа...</p>
-            </div>
-        `;
+    <details class="faq-item">
+      <summary class="faq-q">
+        Что я получаю?
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </summary>
+      <div class="faq-a">
+        • Ссылку подписки со всеми серверами и протоколами<br>
+        • 5 устройств одновременно<br>
+        • Безлимитный трафик<br>
+        • Игровой режим с минимальной задержкой
+      </div>
+    </details>
 
-        // Загрузка тарифов
-        async function loadTariffs() {
-            try {
-                const resp = await fetch(`${API_BASE}/api/tariffs`);
-                const tariffs = await resp.json();
+    <details class="faq-item">
+      <summary class="faq-q">
+        Важно знать
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </summary>
+      <div class="faq-a">
+        • При импорте подписки в приложение появятся все 8 серверов<br>
+        • Средства не возвращаются — услуга считается оказанной в момент получения ключа<br>
+        • Каждая покупка создаёт новую подписку
+      </div>
+    </details>
+  </div>
+</section>
 
-                const monthPrice = tariffs.find(t => t.slug === 'quantum_month')?.price;
+<footer>
+  <div class="wrap">
+    <div class="footer-inner">
+      <div class="footer-links">
+        <a href="/privacy.html">Политика конфиденциальности</a>
+        <a href="/terms.html">Пользовательское соглашение</a>
+        <a href="mailto:support@awxvpn.com">Поддержка</a>
+      </div>
+      <div class="footer-copy">© 2026 AWX VPN</div>
+    </div>
+  </div>
+</footer>
 
-                const planName = (slug, title) => {
-                    const names = {
-                        quantum_month: 'Quantum Месяц',
-                        quantum_quarter: 'Quantum 3 Месяца',
-                        quantum_halfyear: 'Quantum 6 Месяцев',
-                        quantum_year: 'Quantum 12 Месяцев'
-                    };
-                    return names[slug] || title;
-                };
+<!-- Modal -->
+<div id="payment-modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
 
-                const container = document.getElementById('tariffs-container');
-                container.innerHTML = tariffs.map((t, idx) => {
-                    // Скидка относительно помесячной цены
-                    const fullPrice = monthPrice ? Math.round(monthPrice * t.days / 30) : null;
-                    const discount = fullPrice ? Math.round((1 - t.price / fullPrice) * 100) : 0;
-                    const isPopular = idx === 1;
+<script>
+const API_BASE = 'http://localhost:8000';
 
-                    return `
-                    <div class="relative flex flex-col bg-white rounded-2xl shadow-lg p-8 transition hover:shadow-xl ${isPopular ? 'ring-2 ring-blue-500 scale-[1.02]' : ''}">
-                        ${isPopular ? '<div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-xs font-bold px-4 py-1 rounded-full shadow">ПОПУЛЯРНЫЙ</div>' : ''}
-                        ${discount >= 5 ? `<div class="absolute top-4 right-4 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-full">-${discount}%</div>` : ''}
-                        <div class="text-center mb-6">
-                            <h3 class="text-xl font-bold text-gray-900 mb-2">${planName(t.slug, t.title)}</h3>
-                            <div class="text-4xl font-bold text-blue-600">${t.price} ₽</div>
-                            <div class="text-sm text-gray-400 mt-1">за ${t.days} ${t.days % 10 === 1 && t.days % 100 !== 11 ? 'день' : (t.days % 10 >= 2 && t.days % 10 <= 4 && (t.days % 100 < 10 || t.days % 100 >= 20) ? 'дня' : 'дней')}</div>
-                        </div>
-                        <ul class="space-y-3 mb-8 flex-grow">
-                            <li class="flex items-center text-sm text-gray-600">
-                                <i class="fas fa-check text-green-500 mr-3"></i>
-                                Безлимитный трафик
-                            </li>
-                            <li class="flex items-center text-sm text-gray-600">
-                                <i class="fas fa-check text-green-500 mr-3"></i>
-                                5 устройств одновременно
-                            </li>
-                            <li class="flex items-center text-sm text-gray-600">
-                                <i class="fas fa-check text-green-500 mr-3"></i>
-                                Все серверы и протоколы
-                            </li>
-                            <li class="flex items-center text-sm text-gray-600">
-                                <i class="fas fa-check text-green-500 mr-3"></i>
-                                Игровой режим
-                            </li>
-                        </ul>
-                        <button onclick="buyTariff('${t.slug}', '${planName(t.slug, t.title)}', ${t.price}, ${t.days})" class="w-full py-3.5 rounded-xl font-bold text-white transition shadow-md ${isPopular ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-800 hover:bg-gray-900'}">
-                            Подключить
-                        </button>
-                    </div>
-                `;
-                }).join('');
-            } catch (e) {
-                console.error('Failed to load tariffs:', e);
-            }
-        }
+const MODAL_SPINNER = `
+  <div style="text-align:center;padding:32px 0;">
+    <div style="width:40px;height:40px;border:3px solid #E7E5E0;border-top-color:#1F5F52;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>
+    <p style="color:#6B6862;font-size:14px;">Создание заказа...</p>
+  </div>
+  <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+`;
 
-        // Проверка авторизации
-        function isAuthenticated() {
-            return localStorage.getItem('awx_token') !== null;
-        }
+async function loadTariffs() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/tariffs`);
+    const tariffs = await resp.json();
+    const monthPrice = tariffs.find(t => t.slug === 'quantum_month')?.price;
 
-        // Покупка тарифа
-        async function buyTariff(slug, name, price, days) {
-            // Проверяем авторизацию
-            if (!isAuthenticated()) {
-                // Сохраняем выбранный тариф для после входа
-                localStorage.setItem('awx_pending_tariff', JSON.stringify({slug, name, price, days}));
-                // Редирект на страницу входа с сообщением
-                window.location.href = '/account.html?redirect=buy';
-                return;
-            }
+    const planName = (slug, title) => {
+      const names = {
+        quantum_month: 'Quantum Месяц',
+        quantum_quarter: 'Quantum 3 Месяца',
+        quantum_halfyear: 'Quantum 6 Месяцев',
+        quantum_year: 'Quantum 12 Месяцев'
+      };
+      return names[slug] || title;
+    };
 
-            document.getElementById('payment-modal').classList.remove('hidden');
-            // Показываем детали Quantum-плана, затем спиннер при создании заказа
-            document.getElementById('modal-content').innerHTML = `
-                <div class="bg-blue-50 rounded-lg p-4 mb-4">
-                    <h4 class="font-bold text-lg text-blue-900">${name}</h4>
-                    <div class="text-3xl font-bold text-blue-600 mt-1">${price} ₽</div>
-                    <div class="text-sm text-gray-600">на ${days} дней</div>
-                </div>
-                <ul class="space-y-2 text-sm text-gray-700 mb-6">
-                    <li class="flex items-center">
-                        <i class="fas fa-check text-green-500 mr-2"></i>
-                        Безлимитный трафик
-                    </li>
-                    <li class="flex items-center">
-                        <i class="fas fa-check text-green-500 mr-2"></i>
-                        5 устройств одновременно
-                    </li>
-                    <li class="flex items-center">
-                        <i class="fas fa-check text-green-500 mr-2"></i>
-                        Доступ к нескольким серверам и протоколам
-                    </li>
-                </ul>
-                ${MODAL_SPINNER}
-            `;
+    const container = document.getElementById('tariff-grid');
+    container.innerHTML = tariffs.map((t, idx) => {
+      const fullPrice = monthPrice ? Math.round(monthPrice * t.days / 30) : null;
+      const discount = fullPrice ? Math.round((1 - t.price / fullPrice) * 100) : 0;
+      const isPopular = idx === 1;
+      const dayWord = t.days % 10 === 1 && t.days % 100 !== 11 ? 'день' : (t.days % 10 >= 2 && t.days % 10 <= 4 && (t.days % 100 < 10 || t.days % 100 >= 20) ? 'дня' : 'дней');
 
-            try {
-                const token = localStorage.getItem('awx_token');
-                const headers = { 'Content-Type': 'application/json' };
-                if (token) headers['Authorization'] = `Bearer ${token}`;
+      return `
+      <div class="tariff ${isPopular ? 'popular' : ''}">
+        ${isPopular ? '<div class="tariff-badge">ПОПУЛЯРНЫЙ</div>' : ''}
+        ${discount >= 5 ? `<div style="position:absolute;top:12px;right:12px;background:#dc2626;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:12px;">-${discount}%</div>` : ''}
+        <div class="tariff-name">${planName(t.slug, t.title)}</div>
+        <div class="tariff-price">${t.price} ₽</div>
+        <div class="tariff-period">за ${t.days} ${dayWord}</div>
+        <ul class="tariff-features">
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Безлимитный трафик</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>5 устройств</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Все серверы</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Игровой режим</li>
+        </ul>
+        <button onclick="buyTariff('${t.slug}','${planName(t.slug,t.title)}',${t.price},${t.days})" class="btn ${isPopular ? 'btn-dark' : 'btn-outline'}" style="width:100%;padding:12px;border-radius:8px;">
+          Подключить
+        </button>
+      </div>
+    `}).join('');
+  } catch (e) {
+    console.error('Failed to load tariffs:', e);
+  }
+}
 
-                const resp = await fetch(`${API_BASE}/api/order/create`, {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify({ tariff: slug })
-                });
+function isAuthenticated() {
+  return localStorage.getItem('awx_token') !== null;
+}
 
-                const data = await resp.json();
+async function buyTariff(slug, name, price, days) {
+  if (!isAuthenticated()) {
+    localStorage.setItem('awx_pending_tariff', JSON.stringify({slug, name, price, days}));
+    window.location.href = '/account.html?redirect=buy';
+    return;
+  }
 
-                if (data.payment_url) {
-                    // Редирект на страницу оплаты
-                    window.location.href = data.payment_url;
-                } else {
-                    throw new Error('No payment URL');
-                }
-            } catch (e) {
-                document.getElementById('modal-content').innerHTML = `
-                    <div class="text-center text-red-600">
-                        <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
-                        <p>Ошибка при создании заказа. Попробуйте позже.</p>
-                        <button onclick="closeModal()" class="mt-4 bg-gray-200 px-6 py-2 rounded">
-                            Закрыть
-                        </button>
-                    </div>
-                `;
-            }
-        }
+  document.getElementById('modal-content').innerHTML = `
+    <div style="background:var(--accent-bg);border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div style="font-weight:700;font-size:16px;margin-bottom:4px;">${name}</div>
+      <div style="font-size:28px;font-weight:700;color:var(--accent);">${price} ₽</div>
+      <div style="font-size:13px;color:var(--text-3);">на ${days} дней</div>
+    </div>
+    <ul style="list-style:none;padding:0;margin:0 0 20px;font-size:13px;color:var(--text-2);">
+      <li style="padding:4px 0;">✓ Безлимитный трафик</li>
+      <li style="padding:4px 0;">✓ 5 устройств</li>
+      <li style="padding:4px 0;">✓ Все серверы и протоколы</li>
+    </ul>
+    ${MODAL_SPINNER}
+  `;
+  document.getElementById('payment-modal').classList.add('active');
 
-        function closeModal() {
-            document.getElementById('payment-modal').classList.add('hidden');
-        }
+  try {
+    const token = localStorage.getItem('awx_token');
+    const headers = {'Content-Type': 'application/json'};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        // Загрузка при старте
-        loadTariffs();
-    </script>
+    const resp = await fetch(`${API_BASE}/api/order/create`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({tariff: slug})
+    });
+    const data = await resp.json();
+    if (data.payment_url) {
+      window.location.href = data.payment_url;
+    } else {
+      throw new Error('No payment URL');
+    }
+  } catch (e) {
+    document.getElementById('modal-content').innerHTML = `
+      <div style="text-align:center;padding:24px 0;color:#dc2626;">
+        <p style="font-weight:600;margin-bottom:12px;">Ошибка при создании заказа</p>
+        <p style="font-size:13px;color:var(--text-3);">Попробуйте позже</p>
+        <button onclick="closeModal()" class="btn btn-outline" style="margin-top:16px;">Закрыть</button>
+      </div>
+    `;
+  }
+}
+
+function closeModal() {
+  document.getElementById('payment-modal').classList.remove('active');
+}
+
+loadTariffs();
+</script>
+
 </body>
 </html>
