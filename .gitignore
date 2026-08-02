@@ -5,3 +5,4 @@ backend/*.pyc
 backend/venv/
 *.log
 .DS_Store
+*.docx
