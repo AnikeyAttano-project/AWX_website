@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS orders (
 
 async def init_db():
     async with aiosqlite.connect(settings.database_path) as db:
+        # WAL mode — конкурентные чтения не блокируют запись
+        await db.execute("PRAGMA journal_mode=WAL")
+        # Блокировка БД до 5 секунд при одновременной записи
+        await db.execute("PRAGMA busy_timeout=5000")
+
         await db.executescript(_CREATE)
         # Миграция: добавляем новые колонки если их нет
         try:
@@ -36,6 +41,13 @@ async def init_db():
             await db.execute("ALTER TABLE orders ADD COLUMN error_msg TEXT")
         except Exception:
             pass
+        # Индексы для частых запросов
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orders_tx ON orders(platega_tx_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)"
+        )
         await db.commit()
 
 
@@ -80,13 +92,14 @@ async def save_subscription(
     sub_id: str,
     sub_url: str,
     inbound_ids: str = "",
+    expires_at: str = "",
 ):
     async with aiosqlite.connect(settings.database_path) as db:
         await db.execute(
             """UPDATE orders
-               SET xui_email = ?, xui_sub_id = ?, sub_url = ?, inbound_ids = ?
+               SET xui_email = ?, xui_sub_id = ?, sub_url = ?, inbound_ids = ?, expires_at = ?
                WHERE id = ?""",
-            (email, sub_id, sub_url, inbound_ids, order_id),
+            (email, sub_id, sub_url, inbound_ids, expires_at, order_id),
         )
         await db.commit()
 

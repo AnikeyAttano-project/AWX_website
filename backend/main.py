@@ -3,6 +3,8 @@ import logging
 import io
 import hmac
 import hashlib
+import html
+import json
 import qrcode
 import base64
 from contextlib import asynccontextmanager
@@ -25,6 +27,7 @@ from xui_client import (
     get_sub_links, renew_client, check_client_status,
     XuiError,
 )
+from admin import admin_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -84,10 +87,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="VPN Shop", lifespan=lifespan)
 
 # CORS: разрешаем только указанные домены (в .env ALLOWED_ORIGINS)
-import json as json_module
 try:
-    allowed_origins = json_module.loads(settings.allowed_origins)
-except (AttributeError, json_module.JSONDecodeError):
+    allowed_origins = json.loads(settings.allowed_origins)
+except (AttributeError, json.JSONDecodeError):
     allowed_origins = ["http://localhost:3000", "http://localhost:8000"]
 
 app.add_middleware(
@@ -99,10 +101,34 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Добавляет заголовки безопасности (CSP) к HTML-ответам."""
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+# ————————————————— АДМИН ПАНЕЛЬ —————————————————
+# Маршруты /admin/* — защищены заголовком X-Admin-Key (см. admin.py)
+app.include_router(admin_router)
+
+
 # ————————————————— МОДЕЛИ —————————————————
 
 class CreateOrderRequest(BaseModel):
-    tariff: str  # "month" | "quarter" | "year"
+    tariff: str  # "quantum_month" | "quantum_quarter" | "quantum_halfyear" | "quantum_year"
 
 
 # ————————————————— ЭНДПОИНТЫ API —————————————————
@@ -155,11 +181,17 @@ async def api_create_order(req: CreateOrderRequest, request: Request):
 
 
 @app.get("/api/order/{order_id}/status")
-async def api_order_status(order_id: str):
+async def api_order_status(order_id: str, request: Request):
     """
     Витрина опрашивает этот эндпоинт после редиректа с оплаты.
     Возвращает sub-ссылку, если ключ уже создан.
     """
+    # Rate limiting: 30 запросов в минуту с одного IP
+    client_ip = request.client.host
+    if not check_rate_limit(client_ip, max_requests=30, window_minutes=1):
+        logger.warning("Rate limit exceeded for status endpoint, IP: %s", client_ip)
+        raise HTTPException(429, "Слишком много запросов. Попробуйте позже.")
+
     order = await get_order(order_id)
     if not order:
         raise HTTPException(404, "Заказ не найден")
@@ -210,7 +242,7 @@ async def platega_webhook(request: Request):
         raise HTTPException(403, "Invalid signature")
 
     try:
-        body_json = json_module.loads(body)
+        body_json = json.loads(body)
     except Exception:
         body_json = {}
 
@@ -273,25 +305,32 @@ async def fulfill_order(order_id: str):
 
     tariff = settings.tariffs.get(order["tariff"])
     days = tariff["days"] if tariff else 30
+    devices = tariff["devices"] if tariff else 1
 
-    # Уникальный email на основе номера заказа
-    email = f"order-{order_id}@vpn.local"
+    # Уникальный email на основе тарифа и номера заказа
+    email = f"{order['tariff']}-{order_id}@vpn.local"
 
     try:
         # КЛЮЧЕВОЙ МОМЕНТ —
         # Создаём клиента ВО ВСЕХ видимых инбаундах
+        # limit_ip = кол-во устройств, разрешённых тарифом
         client_data = await create_client(
             email=email,
             duration_days=days,
+            limit_ip=devices,
         )
 
         # Получаем URL подписки
         sub_url = await get_subscription_url(client_data["sub_id"])
 
         # Сохраняем в БД
+        expires_at = (datetime.utcnow() + timedelta(days=days)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         await save_subscription(
             order_id, email, client_data["sub_id"], sub_url,
             inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
+            expires_at=expires_at,
         )
         logger.info(
             "Order %s fulfilled: email=%s sub=%s",
@@ -411,7 +450,17 @@ class HTMLTemplate:
     def render(self, **kwargs):
         html = HTML_TEMPLATE_STR
         for key, value in kwargs.items():
-            html = html.replace(f"{{{{ {key} }}}}", str(value))
+            # Escape for JavaScript string literal (produces a safe JS string with quotes)
+            escaped = json.dumps(str(value))
+            # Дополнительная защита для inline <script>:
+            # JSON не экранирует <, >, & — заменяем на \uXXXX, чтобы злоумышленник
+            # не смог выйти из строки через "</script>".
+            escaped = (
+                escaped.replace("<", "\\u003c")
+                .replace(">", "\\u003e")
+                .replace("&", "\\u0026")
+            )
+            html = html.replace(f"{{{{ {key} }}}}", escaped)
         return html
 
 

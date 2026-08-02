@@ -74,7 +74,7 @@ async def check_status(transaction_id: str) -> str:
     """
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
-            f"{settings.platega_api_url}/transaction/{transaction_id}",
+            f"{settings.platega_api_url}/v2/transaction/{transaction_id}",
             headers=_headers(),
         )
 

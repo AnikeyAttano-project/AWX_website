@@ -22,7 +22,7 @@ def _ms_timestamp(days: int) -> int:
 
 def _verify_ssl() -> bool:
     """Проверка SSL: по умолчанию отключена для self-signed сертификатов."""
-    return settings.xui_verify_ssl.lower() == "true"
+    return settings.xui_verify_ssl
 
 
 def _parse_inbound_ids() -> list[int]:
@@ -67,12 +67,16 @@ async def create_client(
             json=body, headers=_headers(),
         )
 
+    if resp.status_code != 200:
+        raise XuiError(f"3x-UI add error: HTTP {resp.status_code}")
+
     data = resp.json()
     if not data.get("success"):
         msg = data.get("msg", "")
-        # Идемпотентность: если клиент уже существует — не ошибка
+        # Идемпотентность: если клиент уже существует — не ошибка.
+        # ВАЖНО: не матчим просто "exist" — иначе "does not exist" тоже попадёт сюда
         msg_lower = str(msg).lower()
-        if "already exists" in msg_lower or "already in use" in msg_lower or "exist" in msg_lower:
+        if "already exists" in msg_lower or "already in use" in msg_lower:
             pass
         else:
             raise XuiError(f"3x-UI add error: {msg}")
@@ -86,6 +90,9 @@ async def create_client(
             f"{settings.xui_base_url}/panel/api/clients/get/{email}",
             headers=_headers(),
         )
+
+    if resp.status_code != 200:
+        raise XuiError(f"3x-UI get error: HTTP {resp.status_code}")
 
     data = resp.json()
     if not data.get("success"):
@@ -119,6 +126,9 @@ async def get_share_links(sub_id: str) -> list[str]:
             f"{settings.xui_base_url}/panel/api/clients/subLinks/{sub_id}",
             headers=_headers(),
         )
+
+    if resp.status_code != 200:
+        raise XuiError(f"subLinks error: HTTP {resp.status_code}")
 
     data = resp.json()
     if not data.get("success"):
@@ -154,6 +164,9 @@ async def renew_client(email: str, add_days: int) -> dict:
             headers=_headers(),
         )
 
+    if resp.status_code != 200:
+        raise XuiError(f"Cannot find client {email}: HTTP {resp.status_code}")
+
     data = resp.json()
     if not data.get("success"):
         raise XuiError(f"Cannot find client {email}")
@@ -181,6 +194,9 @@ async def renew_client(email: str, add_days: int) -> dict:
             json=current, headers=_headers(),
         )
 
+    if resp.status_code != 200:
+        raise XuiError(f"3x-UI update error: HTTP {resp.status_code}")
+
     data = resp.json()
     if not data.get("success"):
         raise XuiError(f"3x-UI update error: {data.get('msg')}")
@@ -197,6 +213,9 @@ async def check_client_status(email: str) -> dict:
             f"{settings.xui_base_url}/panel/api/clients/get/{email}",
             headers=_headers(),
         )
+
+    if resp.status_code != 200:
+        raise XuiError(f"Client not found: {email} (HTTP {resp.status_code})")
 
     data = resp.json()
     if not data.get("success"):
@@ -223,6 +242,9 @@ async def get_visible_inbound_ids() -> list[int]:
             f"{settings.xui_base_url}/panel/api/inbounds/list",
             headers=_headers(),
         )
+
+    if resp.status_code != 200:
+        raise XuiError(f"inbounds/list error: HTTP {resp.status_code}")
 
     data = resp.json()
     if not data.get("success"):

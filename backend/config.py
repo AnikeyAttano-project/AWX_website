@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
@@ -16,8 +18,8 @@ class Settings(BaseSettings):
     xui_sub_base_url: str = ""
 
     # SSL: отключить проверку сертификата для self-signed (3x-UI)
-    # В продакшене с валидным сертификатом установите "true"
-    xui_verify_ssl: str = "false"
+    # В продакшене с валидным сертификатом установите true
+    xui_verify_ssl: bool = False
 
     # Platega
     platega_merchant_id: str
@@ -29,11 +31,15 @@ class Settings(BaseSettings):
     database_path: str = "orders.db"
     allowed_origins: str = '["http://localhost:3000","http://localhost:8000"]'
 
-    # Тарифы: slug → (дней, цена в RUB, название)
+    # Admin panel
+    admin_api_key: str = ""  # X-Admin-Key для /admin/* — задаётся через ADMIN_API_KEY
+
+    # Тарифы: slug → (дней, цена в RUB, название, кол-во устройств, скидка %)
     tariffs: dict = {
-        "month": {"days": 30, "price": 199, "title": "1 месяц"},
-        "quarter": {"days": 90, "price": 499, "title": "3 месяца"},
-        "year": {"days": 365, "price": 1499, "title": "12 месяцев"}
+        "quantum_month": {"days": 31, "price": 300, "title": "Quantum Месяц", "devices": 5, "discount": 0},
+        "quantum_quarter": {"days": 93, "price": 855, "title": "Quantum 3 Месяца", "devices": 5, "discount": 5},
+        "quantum_halfyear": {"days": 186, "price": 1620, "title": "Quantum 6 Месяцев", "devices": 5, "discount": 10},
+        "quantum_year": {"days": 365, "price": 2900, "title": "Quantum 12 Месяцев", "devices": 5, "discount": 20},
     }
 
     @field_validator("xui_inbound_ids")
@@ -43,8 +49,16 @@ class Settings(BaseSettings):
             return ",".join(str(i) for i in v)
         return v
 
+    @field_validator("xui_sub_base_url")
+    @classmethod
+    def validate_sub_base_url(cls, v):
+        v = str(v or "").strip().rstrip("/")
+        if not v:
+            raise ValueError("xui_sub_base_url must not be empty")
+        return v
+
     class Config:
-        env_file = ".env"
+        env_file = Path(__file__).resolve().parent / ".env"
 
 
 settings = Settings()
