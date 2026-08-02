@@ -11,8 +11,10 @@ CREATE TABLE IF NOT EXISTS orders (
     xui_email       TEXT,
     xui_sub_id      TEXT,
     sub_url         TEXT,
+    inbound_ids     TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    paid_at         TEXT
+    paid_at         TEXT,
+    expires_at      TEXT
 );
 """
 
@@ -20,6 +22,15 @@ CREATE TABLE IF NOT EXISTS orders (
 async def init_db():
     async with aiosqlite.connect(settings.database_path) as db:
         await db.executescript(_CREATE)
+        # Миграция: добавляем новые колонки если их нет
+        try:
+            await db.execute("ALTER TABLE orders ADD COLUMN inbound_ids TEXT")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE orders ADD COLUMN expires_at TEXT")
+        except Exception:
+            pass
         await db.commit()
 
 
@@ -58,13 +69,28 @@ async def mark_paid(order_id: str):
         await db.commit()
 
 
-async def save_subscription(order_id: str, email: str, sub_id: str, sub_url: str):
+async def save_subscription(
+    order_id: str,
+    email: str,
+    sub_id: str,
+    sub_url: str,
+    inbound_ids: str = "",
+):
     async with aiosqlite.connect(settings.database_path) as db:
         await db.execute(
             """UPDATE orders
-               SET xui_email = ?, xui_sub_id = ?, sub_url = ?
+               SET xui_email = ?, xui_sub_id = ?, sub_url = ?, inbound_ids = ?
                WHERE id = ?""",
-            (email, sub_id, sub_url, order_id),
+            (email, sub_id, sub_url, inbound_ids, order_id),
+        )
+        await db.commit()
+
+
+async def mark_order_error(order_id: str, error_msg: str):
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute(
+            "UPDATE orders SET status = 'error', platega_tx_id = ? WHERE id = ?",
+            (error_msg, order_id),
         )
         await db.commit()
 

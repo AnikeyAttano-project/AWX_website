@@ -1,6 +1,6 @@
 # 🚀 AWX-WEB-lite — Упрощённая витрина VPN-магазина
 
-> **Версия:** 1.0  
+> **Версия:** 1.1  
 > **Дата:** 2 августа 2026
 
 Легковесная веб-витрина для продажи VPN-подписок с прямой интеграцией **Platega** (оплата) + **3x-UI панель** (выдача ключей).
@@ -51,17 +51,22 @@ pip install -r requirements.txt
 
 ```env
 # ===== 3x-UI панель =====
-XUI_BASE_URL=https://your-panel-url:port/webBasePath
-XUI_API_TOKEN=your_bearer_token_from_panel
-XUI_INBOUND_ID=18
+XUI_BASE_URL=https://attanovpn.duckdns.org:20095/fZD4ErAq8nug3iH7KZ
+XUI_API_TOKEN=your_bearer_token
+
+# Все видимые инбаунды через запятую
+XUI_INBOUND_IDS=5,6,7,8,10,12,13,14
+
+# Базовый URL subscription-сервера (port 2096!)
+XUI_SUB_BASE_URL=https://attanovpn.duckdns.org:2096/sub/
 
 # ===== Platega =====
-PLATEGA_MERCHANT_ID=ваш_merchant_id
-PLATEGA_SECRET=ваш_api_ключ
+PLATEGA_MERCHANT_ID=your_merchant_id
+PLATEGA_SECRET=your_api_key
 PLATEGA_API_URL=https://app.platega.io
 
 # ===== Сайт =====
-SITE_BASE_URL=https://ваш-домен.com
+SITE_BASE_URL=https://your-domain.com
 DATABASE_PATH=orders.db
 ```
 
@@ -104,10 +109,9 @@ sequenceDiagram
     Пользователь->>Platega: Оплачивает картой
     Platega->>Backend: POST /webhook/platega {tx_id, status}
     Backend->>Platega: GET /transaction/{tx_id} (двойная проверка)
-    Backend->>3x-UI: POST /panel/api/clients/add
-    3x-UI-->>Backend: {email, sub_id, uuid}
-    Backend->>3x-UI: GET /panel/api/clients/subLinks/{sub_id}
-    3x-UI-->>Backend: {sub_url, links}
+    Backend->>3x-UI: POST /panel/api/clients/add (inboundIds: [5,6,7,8,10,12,13,14])
+    Backend->>3x-UI: GET /panel/api/clients/get/{email} (получаем subId)
+    Backend->>Backend: Формируем sub_url = XUI_SUB_BASE_URL + subId
     Backend->>БД: Сохраняет sub_url
     Platega->>Сайт: Редирект на /payment/success?order_id=XXX
     Сайт->>Backend: GET /api/order/{order_id}/status (polling)
@@ -136,6 +140,7 @@ sequenceDiagram
 2. **Platega Secret** — используется для подписи запросов
 3. **HTTPS обязателен** — без него токены летят открытым текстом
 4. **Webhook IP whitelist** — ограничьте доступ к `/webhook/platega` в файерволе панели
+5. **Rate limiting** — 10 заказов в час с одного IP
 
 ---
 
@@ -237,31 +242,19 @@ AWX-WEB-lite/
 
 ### Клиенты созданные через сайт видны в боте?
 
-**Нет.** Сайт и бот YadrenoVPN работают независимо. Клиенты, купленные на сайте, создаются с email вида `web-{order_id}@vpn.local` и **не видны** в БД бота.
+**Нет.** Сайт и бот YadrenoVPN работают независимо. Клиенты, купленные на сайте, создаются с email вида `order-{id}@vpn.local` и **не видны** в БД бота.
 
 **Рекомендация:** добавьте на сайт инструкцию: *"Продлевайте подписку там же, где купили"*.
 
 ### Как добавить несколько серверов?
 
-В коде `xui_client.py` есть параметр `inboundIds` — это массив. Сейчас используется один сервер:
+Список серверов определяется автоматически из панели 3x-UI. В `.env` уже заданы все видимые инбаунды:
 
-```python
-"inboundIds": [settings.xui_inbound_id],
+```env
+XUI_INBOUND_IDS=5,6,7,8,10,12,13,14
 ```
 
-Чтобы добавить несколько:
-
-1. В `.env` укажите через запятую: `XUI_INBOUND_ID=18,22,25`
-2. В `config.py` измените тип на `list[int]`:
-   ```python
-   xui_inbound_id: list[int]
-   ```
-3. Парсите строку:
-   ```python
-   @property
-   def xui_inbound_ids(self) -> list[int]:
-       return [int(x) for x in self.xui_inbound_id.split(",")]
-   ```
+Если вы добавите новый сервер в панель с видимым remark (без `--!` префикса), добавьте его ID в этот список.
 
 ### Как изменить тарифы?
 

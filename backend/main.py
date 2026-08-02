@@ -17,16 +17,21 @@ from pydantic import BaseModel
 from config import settings
 from database import (
     init_db, create_order, get_order, save_platega_tx,
-    mark_paid, save_subscription, get_order_by_tx,
+    mark_paid, save_subscription, get_order_by_tx, mark_order_error,
 )
 from platega_client import create_payment, check_status, PlategaError
-from xui_client import create_client, get_sub_links, XuiError
+from xui_client import (
+    create_client, get_subscription_url, get_share_links,
+    get_sub_links, renew_client, check_client_status,
+    XuiError,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Rate limiting - хранилище запросов по IP
+# Rate limiting — хранилище запросов по IP
 rate_limit_storage = defaultdict(list)
+
 
 def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) -> bool:
     """
@@ -49,6 +54,7 @@ def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) 
     # Записываем новый запрос
     rate_limit_storage[ip].append(now)
     return True
+
 
 def verify_platega_signature(body: bytes, signature: str) -> bool:
     """
@@ -163,7 +169,7 @@ async def api_order_status(order_id: str):
         try:
             status = await check_status(order["platega_tx_id"])
             if status == "succeeded":
-                await fulfill_order(order)
+                await fulfill_order(order_id)
                 order = await get_order(order_id)  # перечитываем
         except PlategaError as e:
             logger.error("Polling error: %s", e)
@@ -186,10 +192,7 @@ async def platega_webhook(request: Request):
     """
     Webhook от Platega об изменении статуса транзакции.
     Platega шлёт JSON с полями: id, status, payload (наш order_id).
-
-    Если webhook не настроен — используется polling (см. ниже).
     """
-    # Получаем тело запроса и подпись
     body = await request.body()
     signature = request.headers.get("X-Signature", "")
 
@@ -199,8 +202,7 @@ async def platega_webhook(request: Request):
         raise HTTPException(403, "Invalid signature")
 
     try:
-        import json
-        body_json = json.loads(body)
+        body_json = json_module.loads(body)
     except Exception:
         body_json = {}
 
@@ -227,7 +229,7 @@ async def platega_webhook(request: Request):
         logger.info("Payment not confirmed: tx=%s status=%s", tx_id, real_status)
         return {"ok": True, "msg": "not confirmed yet"}
 
-    await fulfill_order(order)
+    await fulfill_order(order["id"])
 
     return {"ok": True}
 
@@ -246,41 +248,65 @@ async def payment_failed(order_id: str):
 
 # ————————————————— УТИЛИТЫ —————————————————
 
-async def fulfill_order(order: dict):
+async def fulfill_order(order_id: str):
     """
     Создаёт клиента в 3x-UI после успешной оплаты.
+    КЛЮЧЕВОЙ МОМЕНТ — создаём клиента сразу во ВСЕХ видимых инбаундах.
     Идемпотентно: если sub_url уже есть — ничего не делает.
     """
+    order = await get_order(order_id)
+
     if order.get("sub_url"):
-        logger.info("Order %s already fulfilled", order["id"])
+        logger.info("Order %s already fulfilled", order_id)
         return
 
     if order.get("status") != "paid":
-        await mark_paid(order["id"])
+        await mark_paid(order_id)
 
     tariff = settings.tariffs.get(order["tariff"])
     days = tariff["days"] if tariff else 30
 
-    email = f"web-{order['id']}@vpn.local"
+    # Уникальный email на основе номера заказа
+    email = f"order-{order_id}@vpn.local"
 
     try:
-        # 1. Создаём клиента
-        result = await create_client(
+        # КЛЮЧЕВОЙ МОМЕНТ —
+        # Создаём клиента ВО ВСЕХ видимых инбаундах
+        client_data = await create_client(
             email=email,
             duration_days=days,
         )
-        # 2. Получаем sub-ссылку
-        sub = await get_sub_links(result["sub_id"])
 
-        await save_subscription(order["id"], email, result["sub_id"], sub["sub_url"])
+        # Получаем URL подписки
+        sub_url = await get_subscription_url(client_data["sub_id"])
+
+        # Получаем share-ссылки для QR-кода
+        links = await get_share_links(client_data["sub_id"])
+
+        # Сохраняем в БД
+        await save_subscription(
+            order_id, email, client_data["sub_id"], sub_url,
+            inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
+        )
         logger.info(
             "Order %s fulfilled: email=%s sub=%s",
-            order["id"], email, sub["sub_url"][:50],
+            order_id, email, sub_url[:50],
         )
 
     except XuiError as e:
-        logger.error("3x-UI error for order %s: %s", order["id"], e)
+        # Логируем ошибку, заказ остаётся в статусе 'paid'
+        # но без выданного ключа — нужна ручная проверка
+        logger.error("Failed to create client for order %s: %s", order_id, e)
+        await mark_order_error(order_id, str(e))
         return
+
+
+def _parse_inbound_ids() -> list[int]:
+    """Дублируем из xui_client для fulfill_order."""
+    raw = settings.xui_inbound_ids
+    if isinstance(raw, list):
+        return [int(x) for x in raw]
+    return [int(x.strip()) for x in str(raw).split(",") if x.strip()]
 
 
 def _make_qr_base64(data: str) -> str:
@@ -332,13 +358,16 @@ HTML_TEMPLATE_STR = """
                 <img id="qr_code" src="" alt="QR Code" class="border-4 border-gray-200 rounded">
             </div>
 
-            <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4">
+            <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-4">
                 <p class="text-sm text-yellow-700">
-                    <strong>Как использовать:</strong><br>
-                    1. Скопируйте ссылку подписки<br>
-                    2. Откройте v2rayNG / Hiddify / V2Box / Streisand<br>
-                    3. Добавьте подписку → вставьте ссылку<br>
-                    4. Обновите серверы и подключайтесь!
+                    <strong>⚠️ Важно:</strong> Если вы видите только одну ссылку — при импорте в приложение
+                    (v2rayNG, Hiddify, V2Ray Tun) появятся все 8 серверов.
+                </p>
+            </div>
+
+            <div class="bg-green-50 border-l-4 border-green-500 p-4">
+                <p class="text-sm text-green-700">
+                    <strong>📱 Инструкция:</strong> Скопируйте ссылку и вставьте в приложение для VPN.
                 </p>
             </div>
         </div>
@@ -390,3 +419,8 @@ class HTMLTemplate:
 
 
 HTML_TEMPLATE = HTMLTemplate()
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
