@@ -12,7 +12,7 @@
     --surface:#FFFFFF;
     --border:#E7E5E0;
     --text:#191815;
-    --text-2:#6B6862;
+    --text-2:#5A564F;
     --text-3:#9A968D;
     --accent:#1F5F52;
     --accent-bg:#EAF1EE;
@@ -26,9 +26,9 @@
     position:relative;overflow-x:hidden;
   }
   .blob{position:fixed;border-radius:50%;filter:blur(70px);z-index:0;pointer-events:none;}
-  .blob-1{width:420px;height:420px;background:#C7C6C0;top:-120px;left:-100px;opacity:.55;}
-  .blob-2{width:380px;height:380px;background:#9B9A94;top:60px;right:-140px;opacity:.5;}
-  .blob-3{width:360px;height:360px;background:#5B5B57;bottom:10%;left:20%;opacity:.35;}
+  .blob-1{width:440px;height:440px;background:#D6D4CC;top:-130px;left:-110px;opacity:.7;}
+  .blob-2{width:400px;height:400px;background:#8C8B84;top:40px;right:-150px;opacity:.55;}
+  .blob-3{width:380px;height:380px;background:#3E3E3A;bottom:8%;left:22%;opacity:.3;}
   .wrap{max-width:1040px;margin:0 auto;padding:0 24px;}
 
   /* Header */
@@ -38,6 +38,11 @@
     backdrop-filter:blur(20px) saturate(160%);
     -webkit-backdrop-filter:blur(20px) saturate(160%);
     border-bottom:1px solid var(--glass-border);
+    transition:background .2s ease;
+  }
+  header.solid{
+    background:rgba(255,255,255,.92);
+    border-bottom:1px solid var(--border);
   }
   nav{display:flex;align-items:center;justify-content:space-between;padding:18px 0;}
   .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;letter-spacing:-.01em;text-decoration:none;color:var(--text);}
@@ -65,9 +70,17 @@
 
   /* Hero */
   .hero{position:relative;z-index:1;padding:130px 0 110px;text-align:center;}
-  .hero-brand{font-size:15px;font-weight:600;color:var(--text-2);letter-spacing:.01em;margin-bottom:18px;}
-  h1{font-weight:700;font-size:50px;line-height:1.12;letter-spacing:-.025em;margin:0 0 34px;max-width:640px;margin-left:auto;margin-right:auto;}
-  .hero-ctas{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;}
+  .hero-icon{
+    display:flex;align-items:center;justify-content:center;
+    width:52px;height:52px;border-radius:50%;
+    background:var(--glass-bg);border:1px solid var(--glass-border);
+    backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);
+    margin:0 auto 22px;
+  }
+  h1{font-weight:700;font-size:46px;line-height:1.15;letter-spacing:-.025em;margin:0 0 16px;white-space:nowrap;}
+  .accent-word{color:var(--accent);}
+  .hero-sub{font-size:16px;color:var(--text-2);margin:0 0 34px;}
+  .hero-ctas{display:flex;gap:12px;justify-content:center;}
   .btn-lg{padding:13px 26px;font-size:15px;border-radius:10px;}
 
   /* Features */
@@ -85,7 +98,7 @@
   .feat:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(30,30,20,.08);}
   .feat-icon{margin-bottom:16px;color:var(--accent);}
   .feat-title{font-weight:700;font-size:15px;margin-bottom:6px;}
-  .feat-desc{font-size:13.5px;color:var(--text-2);line-height:1.5;}
+  .feat-desc{font-size:14.5px;color:var(--text-2);line-height:1.55;}
 
   /* Tariffs */
   section.tariffs{position:relative;z-index:1;padding:70px 0 100px;}
@@ -157,7 +170,7 @@
   .modal-close:hover{color:var(--text);}
 
   @media(max-width:820px){
-    h1{font-size:34px;}
+    h1{font-size:32px;white-space:normal;}
     .nav-links{display:none;}
     .feat-grid,.tariff-grid{grid-template-columns:1fr;}
     .hero{padding:80px 0 60px;}
@@ -195,8 +208,11 @@
 
 <section class="hero">
   <div class="wrap">
-    <div class="hero-brand">🛡️ AWX VPN</div>
-    <h1>Твой приватный доступ в сеть</h1>
+    <div class="hero-icon">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 5v6c0 5.2 3.4 9.4 8 11 4.6-1.6 8-5.8 8-11V5l-8-3z" stroke="#191815" stroke-width="1.6" stroke-linejoin="round"/></svg>
+    </div>
+    <h1>Твой <span class="accent-word">приватный</span> доступ в сеть</h1>
+    <p class="hero-sub">VPN без логов и ограничений скорости</p>
     <div class="hero-ctas">
       <a href="#tariffs" class="btn btn-dark btn-lg">Подключить VPN</a>
       <a href="#features" class="btn btn-glass btn-lg">Как это работает</a>
@@ -439,6 +455,12 @@ function closeModal() {
 }
 
 loadTariffs();
+
+// Scroll effect for header
+const header = document.querySelector('header');
+window.addEventListener('scroll', () => {
+  header.classList.toggle('solid', window.scrollY > 40);
+});
 </script>
 
 </body>
