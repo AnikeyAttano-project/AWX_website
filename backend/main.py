@@ -271,6 +271,42 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     }
 
 
+@app.post("/api/order/demo")
+async def api_demo_order(req: CreateOrderRequest, request: Request, user: dict = Depends(get_optional_user)):
+    """
+    ДЕМО-оплата — создает заказ и сразу выдаёт ключ без реальной оплаты.
+    Используйте только для тестирования!
+    """
+    tariff = settings.tariffs.get(req.tariff)
+    if not tariff:
+        raise HTTPException(400, "Неизвестный тариф")
+
+    order_id = uuid.uuid4().hex[:12]
+    await create_order(order_id, req.tariff, tariff["price"])
+
+    # Привязываем к пользователю
+    if user:
+        await set_order_user(order_id, user["id"])
+
+    # Сразу помечаем как оплаченный
+    await mark_paid(order_id)
+
+    # Сразу выдаём ключ
+    try:
+        await fulfill_order(order_id)
+    except Exception as e:
+        logger.error("Demo fulfill error: %s", e)
+
+    logger.info("Demo order created: %s (tariff: %s)", order_id, req.tariff)
+
+    return {
+        "order_id": order_id,
+        "payment_url": f"{settings.site_base_url}/payment/success?order_id={order_id}",
+        "amount": 0,
+        "demo": True,
+    }
+
+
 @app.get("/api/order/{order_id}/status")
 async def api_order_status(order_id: str, request: Request):
     """
@@ -298,12 +334,13 @@ async def api_order_status(order_id: str, request: Request):
     # Case 2: not yet paid → check Platega (polling fallback)
     elif order["status"] != "paid" and order.get("platega_tx_id"):
         try:
-            status = await check_status(order["platega_tx_id"])
-            if status == "succeeded":
+            platega_status = await check_status(order["platega_tx_id"])
+            logger.info("Polling order %s: tx=%s status=%s", order_id, order["platega_tx_id"], platega_status)
+            if platega_status == "succeeded":
                 await fulfill_order(order_id)
                 order = await get_order(order_id)
         except PlategaError as e:
-            logger.error("Polling error: %s", e)
+            logger.error("Polling error for order %s: %s", order_id, e)
 
     response = {
         "order_id": order["id"],

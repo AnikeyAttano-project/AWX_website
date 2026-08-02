@@ -71,6 +71,10 @@ async def check_status(transaction_id: str) -> str:
     """
     Возвращает нормализованный статус:
     'pending' | 'succeeded' | 'cancelled'
+
+    Platega API: GET /transaction/{id}
+    Подтверждённые статусы: CONFIRMED, PAID, COMPLETED
+    Отменённые: CANCELED, CANCELLED, CHARGEBACKED, REFUNDED
     """
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
@@ -86,8 +90,11 @@ async def check_status(transaction_id: str) -> str:
     data = resp.json()
     status = str(data.get("status", "")).upper()
 
-    if status == "CONFIRMED":
+    # Успешные статусы — платёж прошёл
+    if status in ("CONFIRMED", "PAID", "COMPLETED"):
         return "succeeded"
-    if status in ("CANCELED", "CANCELLED", "CHARGEBACKED"):
+    # Отменённые / возврат
+    if status in ("CANCELED", "CANCELLED", "CHARGEBACKED", "REFUNDED"):
         return "cancelled"
+    # Всё остальное — ожидание
     return "pending"

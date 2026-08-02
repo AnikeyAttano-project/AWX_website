@@ -100,6 +100,13 @@
             <div id="tariffs-container" class="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
                 <!-- Тарифы загружаются динамически -->
             </div>
+            <!-- ДЕМО-оплата (для тестирования) -->
+            <div class="mt-8 text-center">
+                <p class="text-sm text-gray-400 mb-2">Тестирование без реальной оплаты:</p>
+                <button onclick="demoBuy('quantum_month')" class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm hover:bg-gray-300 transition">
+                    🧪 Демо-оплата (Quantum Месяц)
+                </button>
+            </div>
         </div>
     </section>
 
@@ -295,6 +302,43 @@
                     <div class="text-center text-red-600">
                         <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
                         <p>Ошибка при создании заказа. Попробуйте позже.</p>
+                        <button onclick="closeModal()" class="mt-4 bg-gray-200 px-6 py-2 rounded">
+                            Закрыть
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        // ДЕМО-оплата (без Platega)
+        async function demoBuy(slug) {
+            document.getElementById('payment-modal').classList.remove('hidden');
+            document.getElementById('modal-content').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p class="mt-4 text-gray-600">Демо-оплата: создание ключа...</p>
+                </div>
+            `;
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/order/demo`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tariff: slug })
+                });
+
+                const data = await resp.json();
+
+                if (data.payment_url) {
+                    window.location.href = data.payment_url;
+                } else {
+                    throw new Error('No payment URL');
+                }
+            } catch (e) {
+                document.getElementById('modal-content').innerHTML = `
+                    <div class="text-center text-red-600">
+                        <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
+                        <p>Ошибка демо-оплаты. Попробуйте позже.</p>
                         <button onclick="closeModal()" class="mt-4 bg-gray-200 px-6 py-2 rounded">
                             Закрыть
                         </button>
