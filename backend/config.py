@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # Site
     site_base_url: str  # https://your-domain.com (БЕЗ слэша)
     database_path: str = "orders.db"
+    allowed_origins: str = '["http://localhost:3000","http://localhost:8000"]'
 
     # Тарифы: slug → (дней, цена в RUB, название)
     tariffs: dict = {

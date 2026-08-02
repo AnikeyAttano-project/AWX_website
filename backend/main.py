@@ -1,9 +1,13 @@
 import uuid
 import logging
 import io
+import hmac
+import hashlib
 import qrcode
 import base64
 from contextlib import asynccontextmanager
+from collections import defaultdict
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -21,6 +25,48 @@ from xui_client import create_client, get_sub_links, XuiError
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# Rate limiting - хранилище запросов по IP
+rate_limit_storage = defaultdict(list)
+
+def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) -> bool:
+    """
+    Проверяет rate limit для IP адреса.
+    Возвращает True если запрос разрешён, False если превышен лимит.
+    """
+    now = datetime.now()
+    window_start = now - timedelta(minutes=window_minutes)
+
+    # Очищаем старые записи
+    rate_limit_storage[ip] = [
+        req_time for req_time in rate_limit_storage[ip]
+        if req_time > window_start
+    ]
+
+    # Проверяем лимит
+    if len(rate_limit_storage[ip]) >= max_requests:
+        return False
+
+    # Записываем новый запрос
+    rate_limit_storage[ip].append(now)
+    return True
+
+def verify_platega_signature(body: bytes, signature: str) -> bool:
+    """
+    Проверяет подпись webhook от Platega через HMAC-SHA256.
+    Platega отправляет подпись в заголовке X-Signature.
+    """
+    if not settings.platega_secret:
+        logger.warning("PLATEGA_SECRET not set, skipping signature verification")
+        return True
+
+    expected = hmac.new(
+        settings.platega_secret.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,11 +77,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="VPN Shop", lifespan=lifespan)
 
+# CORS: разрешаем только указанные домены (в .env ALLOWED_ORIGINS)
+import json as json_module
+try:
+    allowed_origins = json_module.loads(settings.allowed_origins)
+except (AttributeError, json_module.JSONDecodeError):
+    allowed_origins = ["http://localhost:3000", "http://localhost:8000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # в проде укажите свой домен
+    allow_origins=allowed_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
 
@@ -57,11 +111,17 @@ async def list_tariffs():
 
 
 @app.post("/api/order/create")
-async def api_create_order(req: CreateOrderRequest):
+async def api_create_order(req: CreateOrderRequest, request: Request):
     """
     Шаг 1: пользователь выбирает тариф.
     Создаёт заказ в БД и платёжную ссылку в Platega.
     """
+    # Rate limiting: 10 заказов в час с одного IP
+    client_ip = request.client.host
+    if not check_rate_limit(client_ip, max_requests=10, window_minutes=60):
+        logger.warning("Rate limit exceeded for IP: %s", client_ip)
+        raise HTTPException(429, "Слишком много запросов. Попробуйте позже.")
+
     tariff = settings.tariffs.get(req.tariff)
     if not tariff:
         raise HTTPException(400, "Неизвестный тариф")
@@ -129,16 +189,26 @@ async def platega_webhook(request: Request):
 
     Если webhook не настроен — используется polling (см. ниже).
     """
+    # Получаем тело запроса и подпись
+    body = await request.body()
+    signature = request.headers.get("X-Signature", "")
+
+    # Проверяем подпись (если настроен PLATEGA_SECRET)
+    if not verify_platega_signature(body, signature):
+        logger.warning("Invalid webhook signature")
+        raise HTTPException(403, "Invalid signature")
+
     try:
-        body = await request.json()
+        import json
+        body_json = json.loads(body)
     except Exception:
-        body = {}
+        body_json = {}
 
-    logger.info("Platega webhook received: %s", body)
+    logger.info("Platega webhook received: %s", body_json)
 
-    tx_id = body.get("id") or body.get("transactionId")
-    status = str(body.get("status", "")).upper()
-    order_id = body.get("payload") or ""
+    tx_id = body_json.get("id") or body_json.get("transactionId")
+    status = str(body_json.get("status", "")).upper()
+    order_id = body_json.get("payload") or ""
 
     if not tx_id:
         return {"ok": False, "error": "no transaction id"}

@@ -51,8 +51,8 @@ pip install -r requirements.txt
 
 ```env
 # ===== 3x-UI панель =====
-XUI_BASE_URL=https://attanovpn.duckdns.org:20095/fZD4ErAq8nug3iH7KZ
-XUI_API_TOKEN=1bsYa1MUPYATf6nJso0IDiPrwOBBRf5y2rSuO2ix2cKtUzSW
+XUI_BASE_URL=https://your-panel-url:port/webBasePath
+XUI_API_TOKEN=your_bearer_token_from_panel
 XUI_INBOUND_ID=18
 
 # ===== Platega =====
