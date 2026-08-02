@@ -21,7 +21,7 @@ from database import (
 )
 from platega_client import create_payment, check_status, PlategaError
 from xui_client import (
-    create_client, get_subscription_url, get_share_links,
+    create_client, get_subscription_url, _parse_inbound_ids,
     get_sub_links, renew_client, check_client_status,
     XuiError,
 )
@@ -62,8 +62,8 @@ def verify_platega_signature(body: bytes, signature: str) -> bool:
     Platega отправляет подпись в заголовке X-Signature.
     """
     if not settings.platega_secret:
-        logger.warning("PLATEGA_SECRET not set, skipping signature verification")
-        return True
+        logger.error("PLATEGA_SECRET not set — webhook rejected")
+        return False
 
     expected = hmac.new(
         settings.platega_secret.encode(),
@@ -164,13 +164,21 @@ async def api_order_status(order_id: str):
     if not order:
         raise HTTPException(404, "Заказ не найден")
 
-    # Если ещё не оплачен — проверяем через Platega (polling fallback)
-    if order["status"] != "paid" and order.get("platega_tx_id"):
+    # Case 1: paid but no key created (3x-UI error) → retry
+    if order["status"] == "paid" and not order.get("sub_url"):
+        try:
+            await fulfill_order(order_id)
+            order = await get_order(order_id)
+        except Exception as e:
+            logger.error("Retry failed for order %s: %s", order_id, e)
+
+    # Case 2: not yet paid → check Platega (polling fallback)
+    elif order["status"] != "paid" and order.get("platega_tx_id"):
         try:
             status = await check_status(order["platega_tx_id"])
             if status == "succeeded":
                 await fulfill_order(order_id)
-                order = await get_order(order_id)  # перечитываем
+                order = await get_order(order_id)
         except PlategaError as e:
             logger.error("Polling error: %s", e)
 
@@ -280,9 +288,6 @@ async def fulfill_order(order_id: str):
         # Получаем URL подписки
         sub_url = await get_subscription_url(client_data["sub_id"])
 
-        # Получаем share-ссылки для QR-кода
-        links = await get_share_links(client_data["sub_id"])
-
         # Сохраняем в БД
         await save_subscription(
             order_id, email, client_data["sub_id"], sub_url,
@@ -299,14 +304,6 @@ async def fulfill_order(order_id: str):
         logger.error("Failed to create client for order %s: %s", order_id, e)
         await mark_order_error(order_id, str(e))
         return
-
-
-def _parse_inbound_ids() -> list[int]:
-    """Дублируем из xui_client для fulfill_order."""
-    raw = settings.xui_inbound_ids
-    if isinstance(raw, list):
-        return [int(x) for x in raw]
-    return [int(x.strip()) for x in str(raw).split(",") if x.strip()]
 
 
 def _make_qr_base64(data: str) -> str:

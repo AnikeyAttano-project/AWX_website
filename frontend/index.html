@@ -122,8 +122,9 @@
                 <details class="bg-gray-50 rounded-lg p-6">
                     <summary class="font-semibold text-lg cursor-pointer">Как продлить подписку?</summary>
                     <p class="mt-4 text-gray-600">
-                        Просто купите новый тариф с тем же email — срок действия продлится автоматически.
-                        <strong>Важно:</strong> продлевайте там же, где купили (сайт или Telegram-бот).
+                        Каждая покупка создаёт новую подписку — срок действия существующей не продлевается автоматически.
+                        Старая подписка истечёт сама после окончания оплаченного периода.
+                        <strong>Важно:</strong> если вам нужно управлять подпиской, используйте тот способ покупки, через который вы её приобрели.
                     </p>
                 </details>
             </div>
@@ -154,16 +155,21 @@
                 </button>
             </div>
             <div id="modal-content">
-                <div class="text-center py-8">
-                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                    <p class="mt-4 text-gray-600">Создание заказа...</p>
-                </div>
+                <!-- Контент задаётся из JS: спиннер или сообщение об ошибке -->
             </div>
         </div>
     </div>
 
     <script>
         const API_BASE = 'http://localhost:8000'; // Измените на ваш домен
+
+        // Спиннер показывается в модалке во время создания заказа
+        const MODAL_SPINNER = `
+            <div class="text-center py-8">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                <p class="mt-4 text-gray-600">Создание заказа...</p>
+            </div>
+        `;
 
         // Загрузка тарифов
         async function loadTariffs() {
@@ -207,6 +213,8 @@
         // Покупка тарифа
         async function buyTariff(slug) {
             document.getElementById('payment-modal').classList.remove('hidden');
+            // Сбрасываем контент модалки на спиннер при каждой попытке
+            document.getElementById('modal-content').innerHTML = MODAL_SPINNER;
 
             try {
                 const resp = await fetch(`${API_BASE}/api/order/create`, {

@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS orders (
     inbound_ids     TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     paid_at         TEXT,
-    expires_at      TEXT
+    expires_at      TEXT,
+    error_msg       TEXT
 );
 """
 
@@ -29,6 +30,10 @@ async def init_db():
             pass
         try:
             await db.execute("ALTER TABLE orders ADD COLUMN expires_at TEXT")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE orders ADD COLUMN error_msg TEXT")
         except Exception:
             pass
         await db.commit()
@@ -89,7 +94,7 @@ async def save_subscription(
 async def mark_order_error(order_id: str, error_msg: str):
     async with aiosqlite.connect(settings.database_path) as db:
         await db.execute(
-            "UPDATE orders SET status = 'error', platega_tx_id = ? WHERE id = ?",
+            "UPDATE orders SET status = 'error', error_msg = ? WHERE id = ?",
             (error_msg, order_id),
         )
         await db.commit()
