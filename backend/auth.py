@@ -113,8 +113,9 @@ async def register(req: RegisterRequest):
     if settings.email_verification_required:
         vtoken = create_verification_token(user_id)
         verify_url = f"{settings.site_base_url}/api/auth/verify?token={vtoken}"
-        result["verification_url"] = verify_url
+        # НЕ возвращаем URL в ответе (безопасность) — только в лог
         logger.info("Verify link for %s: %s", user_id, verify_url)
+        result["message"] = "Check your email for verification link"
 
     return result
 
