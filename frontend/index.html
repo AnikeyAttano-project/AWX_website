@@ -290,6 +290,17 @@
     <div id="tariff-grid" class="tariff-grid">
       <!-- Тарифы загружаются динамически -->
     </div>
+
+    <!-- ДЕМО-РЕЖИМ (только для тестирования):
+         кнопка выдаёт подписку БЕЗ оплаты через POST /api/order/demo.
+         В продакшене скрывается автоматически через DEMO_MODE=false в .env
+         (frontend читает настройку с GET /api/config). -->
+    <div id="demo-section" class="demo-section" style="margin-top: 40px; text-align: center;">
+      <p style="color: var(--text-3); font-size: 13px; margin-bottom: 12px;">Для тестирования</p>
+      <button onclick="demoOrder()" class="btn btn-outline" style="padding: 12px 24px;">
+        🎮 Демо подписка
+      </button>
+    </div>
   </div>
 </section>
 
@@ -474,6 +485,51 @@ function closeModal() {
   document.getElementById('payment-modal').classList.remove('active');
 }
 
+// ДЕМО-РЕЖИМ (только для тестирования): выдаёт ключ без оплаты через POST /api/order/demo.
+// В продакшене кнопка скрыта через DEMO_MODE=false в .env (см. initDemoMode).
+async function demoOrder() {
+  if (!isAuthenticated()) {
+    window.location.href = '/account.html?redirect=buy';
+    return;
+  }
+
+  try {
+    const token = localStorage.getItem('awx_token');
+    const headers = {'Content-Type': 'application/json'};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const resp = await fetch(`${API_BASE}/api/order/demo`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({tariff: 'quantum_month'})
+    });
+    const data = await resp.json();
+
+    if (data.order_id) {
+      // payment_url — абсолютная ссылка на страницу успеха (корректна и при file:// витрине)
+      window.location.href = data.payment_url || `/payment/success?order_id=${data.order_id}`;
+    } else {
+      throw new Error(data.detail || 'Не удалось создать демо-заказ');
+    }
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+}
+
+// ДЕМО-РЕЖИМ: показываем кнопку только если DEMO_MODE=true на сервере (.env).
+async function initDemoMode() {
+  const demoSection = document.getElementById('demo-section');
+  if (!demoSection) return;
+  try {
+    const resp = await fetch(`${API_BASE}/api/config`);
+    const data = await resp.json();
+    demoSection.classList.toggle('hidden', !data.demo_mode);
+  } catch (e) {
+    // Сервер недоступен — прячем демо-кнопку
+    demoSection.classList.add('hidden');
+  }
+}
+
 async function initNavUser() {
   const token = localStorage.getItem('awx_token');
   const loginLink = document.getElementById('nav-login-link');
@@ -508,6 +564,8 @@ function handleNavLogout() {
 initNavUser();
 
 loadTariffs();
+
+initDemoMode();
 
 // Scroll effect for header
 const header = document.querySelector('header');

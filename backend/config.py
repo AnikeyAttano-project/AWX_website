@@ -35,16 +35,21 @@ class Settings(BaseSettings):
     admin_api_key: str = ""  # X-Admin-Key для /admin/* — задаётся через ADMIN_API_KEY
 
     # JWT Auth
-    jwt_secret: str = "change-me-in-production-use-random-string"
+    jwt_secret: str = ""  # Обязателен! Без него сервер не стартует (fail-fast).
     jwt_expire_hours: int = 720  # 30 дней
 
     # Email verification (false = auto-verified at registration)
     email_verification_required: bool = False
 
     # Trial subscription
+    trial_enabled: bool = True
     trial_days: int = 3
     trial_gb: int = 25
     trial_devices: int = 1
+
+    # Демо-режим: кнопка "Демо подписка" на витрине (выдаёт ключ без оплаты).
+    # По умолчанию ВЫКЛЮЧЕН для безопасности. Включите DEMO_MODE=true в .env для отладки.
+    demo_mode: bool = False
 
     # Тарифы: slug → (дней, цена в RUB, название, кол-во устройств, скидка %)
     tariffs: dict = {
@@ -70,6 +75,20 @@ class Settings(BaseSettings):
         # Ensure https:// prefix
         if not v.startswith("http"):
             raise ValueError("xui_sub_base_url must start with http:// or https://")
+        return v
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, v):
+        v = str(v or "").strip()
+        # Fail-fast: не запускаемся с публично известным секретом
+        if not v or v == "change-me-in-production-use-random-string":
+            raise ValueError(
+                "JWT_SECRET обязателен. Сгенерируйте случайный: "
+                "python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+            )
+        if len(v) < 32:
+            raise ValueError("JWT_SECRET слишком короткий — минимум 32 символа")
         return v
 
     class Config:

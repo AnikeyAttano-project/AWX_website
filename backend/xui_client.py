@@ -1,7 +1,10 @@
 import asyncio
+import logging
 import time
 import httpx
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class XuiError(Exception):
@@ -35,24 +38,30 @@ def _parse_inbound_ids() -> list[int]:
 
 async def create_client(
     email: str,
-    duration_days: int,
+    duration_days: int = 0,
     limit_ip: int = 1,
     total_gb: int = 0,
+    expiry_ms: int | None = None,
 ) -> dict:
     """
     Создаёт клиента сразу во ВСЕХ видимых инбаундах и возвращает subId.
 
     POST /add не возвращает subId — нужно делать GET /get/{email} после создания.
 
+    ``expiry_ms`` (мс) задаёт точную дату истечения и имеет приоритет над
+    ``duration_days`` — используется при перевыпуске ключа (rekey), чтобы
+    сохранить оставшееся время подписки.
+
     Возвращает: {"email": ..., "sub_id": ..., "uuid": ...}
     """
     inbound_ids = _parse_inbound_ids()
+    expiry = expiry_ms if expiry_ms is not None else _ms_timestamp(duration_days)
     body = {
         "client": {
             "email": email,
             "enable": True,
             "totalGB": total_gb * 1073741824 if total_gb else 0,  # 0 = безлимит трафика
-            "expiryTime": _ms_timestamp(duration_days),
+            "expiryTime": expiry,
             "limitIp": limit_ip,
             "tgId": 0,
             "reset": 0,
@@ -229,9 +238,64 @@ async def check_client_status(email: str) -> dict:
         "enable": c.get("enable", False),
         "expiry_ms": c.get("expiryTime", 0),
         "total_gb": c.get("totalGB", 0),
+        "up": c.get("up", 0),      # трафик аплоад, байты
+        "down": c.get("down", 0),  # трафик даунлоад, байты
         "sub_id": c.get("subId", ""),
         "inbound_ids": data["obj"].get("inboundIds", []),
     }
+
+
+async def delete_client(email: str) -> dict:
+    """
+    Удаляет клиента из 3x-UI (из всех инбаундов, где он есть).
+
+    Используется при удалении подписки и при перевыпуске ключа.
+    """
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
+        resp = await client.post(
+            f"{settings.xui_base_url}/panel/api/clients/del/{email}",
+            headers=_headers(),
+        )
+
+    if resp.status_code != 200:
+        raise XuiError(f"3x-UI delete error: HTTP {resp.status_code}")
+
+    data = resp.json()
+    if not data.get("success"):
+        raise XuiError(f"3x-UI delete error: {data.get('msg')}")
+
+    return {"email": email, "deleted": True}
+
+
+async def rekey_client(
+    old_email: str,
+    new_email: str,
+    expiry_ms: int,
+    limit_ip: int = 1,
+    total_gb: int = 0,
+) -> dict:
+    """
+    Перевыпуск ключа: удаляет старого клиента и создаёт нового с новым email.
+
+    ``expiry_ms`` — дата истечения нового клиента (мс). Позволяет сохранить
+    оставшееся время подписки при перевыпуске.
+
+    Возвращает: {"email": ..., "sub_id": ..., "uuid": ...}
+    """
+    # Удаляем старого клиента. Если он уже удалён (not found) — продолжаем.
+    try:
+        await delete_client(old_email)
+    except XuiError as e:
+        msg = str(e).lower()
+        if "not found" not in msg and "not exist" not in msg:
+            logger.warning("Rekey: delete old client %s failed: %s", old_email, e)
+
+    return await create_client(
+        email=new_email,
+        expiry_ms=expiry_ms,
+        limit_ip=limit_ip,
+        total_gb=total_gb,
+    )
 
 
 async def get_visible_inbound_ids() -> list[int]:

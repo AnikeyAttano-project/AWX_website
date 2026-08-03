@@ -14,6 +14,7 @@ from jose import JWTError, jwt
 from config import settings
 from database import (
     get_user_by_email, create_user, get_user_by_id, set_user_verified,
+    get_user_by_referral_code, apply_referral_code, get_setting,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
 class RegisterRequest(BaseModel):
     email: str
     password: str
+    referral_code: str = ""  # необязательный реферальный код
 
 
 class LoginRequest(BaseModel):
@@ -61,6 +63,8 @@ async def get_current_user(authorization: str = Header(default="")) -> dict:
     user = await get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if user.get("blocked"):
+        raise HTTPException(status_code=403, detail="Account blocked")
     return user
 
 
@@ -76,7 +80,10 @@ async def get_optional_user(authorization: str = Header(default="")) -> dict | N
             return None
     except JWTError:
         return None
-    return await get_user_by_id(user_id)
+    user = await get_user_by_id(user_id)
+    if user and user.get("blocked"):
+        return None
+    return user
 
 
 async def require_verified_email(user: dict = Depends(get_current_user)):
@@ -102,6 +109,13 @@ async def register(req: RegisterRequest):
     password_hash = pwd_context.hash(req.password)
     verified = 0 if settings.email_verification_required else 1
     await create_user(user_id, req.email.lower().strip(), password_hash, verified=verified)
+
+    # Привязываем реферальный код, если указан при регистрации (не критично при ошибке)
+    if req.referral_code and (await get_setting("referral_enabled", "1")) == "1":
+        code = req.referral_code.strip().upper()
+        referrer = await get_user_by_referral_code(code)
+        if referrer and referrer["id"] != user_id:
+            await apply_referral_code(user_id, referrer["id"])
 
     result = {
         "token": create_token(user_id),
@@ -146,6 +160,8 @@ async def login(req: LoginRequest):
         raise HTTPException(401, "Invalid email or password")
     if not pwd_context.verify(req.password, user["password_hash"]):
         raise HTTPException(401, "Invalid email or password")
+    if user.get("blocked"):
+        raise HTTPException(403, "Account blocked")
     token = create_token(user["id"])
     return {
         "token": token,

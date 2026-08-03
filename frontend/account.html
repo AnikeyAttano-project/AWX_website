@@ -65,6 +65,8 @@
   .btn-dark:hover{background:#000;}
   .btn-outline{border:1px solid var(--border);color:var(--text);background:var(--surface);}
   .btn-outline:hover{border-color:var(--text-3);}
+  .btn-danger{color:#C0392B;border-color:#E8C4C4;background:var(--surface);}
+  .btn-danger:hover{background:#FBEAEA;border-color:#C0392B;}
   .btn-glass{
     background:var(--glass-bg);border:1px solid var(--glass-border);color:var(--text);
     backdrop-filter:blur(16px);box-shadow:0 4px 18px rgba(30,30,20,.06);
@@ -229,11 +231,41 @@
   .modal-error-title{color:#C0392B;font-weight:700;margin-bottom:8px;}
   .modal-error-text{font-size:13px;color:var(--text-2);margin-bottom:16px;}
 
+  /* Stats modal */
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;}
+  .stat-item{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px;}
+  .stat-label{display:block;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;}
+  .stat-value{display:block;font-size:17px;font-weight:700;word-break:break-word;}
+  .stat-sub{display:block;font-size:12px;color:var(--text-3);margin-top:4px;}
+
+  /* Referral */
+  .ref-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px 24px;margin-bottom:22px;box-shadow:0 4px 20px rgba(30,30,20,.04);}
+  .ref-main{display:flex;flex-wrap:wrap;gap:20px;justify-content:space-between;align-items:center;margin-bottom:18px;}
+  .ref-info{min-width:0;}
+  .ref-info h3{font-size:16px;font-weight:700;margin-bottom:6px;}
+  .ref-info p{font-size:13.5px;color:var(--text-2);max-width:540px;line-height:1.55;}
+  .ref-info p strong{color:var(--accent);}
+  .ref-stats{display:flex;gap:28px;flex-shrink:0;}
+  .ref-stat{text-align:center;}
+  .ref-stat-num{font-size:26px;font-weight:700;color:var(--accent);line-height:1.1;}
+  .ref-stat-label{font-size:12px;color:var(--text-3);margin-top:2px;}
+  .ref-link-box{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;}
+  .ref-link-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:10px;}
+  .ref-link-head span{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .ref-link{font-size:13px;color:var(--accent);word-break:break-all;}
+  .ref-list{margin-top:6px;}
+  .ref-list-head{font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;}
+  .ref-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--border);font-size:13.5px;}
+  .ref-row span:first-child{color:var(--text);font-weight:500;word-break:break-all;}
+  .ref-row-date{color:var(--text-3);font-size:12.5px;white-space:nowrap;}
+  .ref-row-days{color:var(--accent);font-weight:600;white-space:nowrap;}
+
   @media(max-width:820px){
     .nav-links{display:none;}
     .account-page{padding:48px 0 60px;}
     .auth-card{padding:24px 20px;}
     .dash-head{flex-direction:column;}
+    .stat-grid{grid-template-columns:1fr;}
   }
 </style>
 </head>
@@ -323,6 +355,10 @@
               <label for="register-password2">Подтвердите пароль</label>
               <input type="password" id="register-password2" required autocomplete="new-password" placeholder="Повторите пароль">
             </div>
+            <div class="field">
+              <label for="register-referral">Реферальный код (необязательно)</label>
+              <input type="text" id="register-referral" autocomplete="off" placeholder="Например: AB12CD34" style="text-transform:uppercase;">
+            </div>
             <div id="register-error" class="form-error hidden"></div>
             <button type="submit" id="register-btn" class="btn btn-dark btn-block">Зарегистрироваться</button>
             <p class="form-switch">
@@ -370,6 +406,17 @@
       <div id="subscriptions-container">
         <!-- Карточки подписок рендерятся из JS -->
       </div>
+
+      <div class="dash-section-head">
+        <h2>Реферальная программа</h2>
+        <button onclick="loadReferral()" title="Обновить" class="icon-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+
+      <div id="referral-container">
+        <!-- Карточка реферальной программы -->
+      </div>
     </div>
   </section>
 
@@ -399,6 +446,32 @@
   </div>
 </div>
 
+<!-- Модальное окно статистики -->
+<div id="stats-modal" class="modal-overlay" onclick="if(event.target===this)closeStatsModal()">
+  <div class="modal modal-key">
+    <button class="modal-close" onclick="closeStatsModal()">×</button>
+    <div id="stats-modal-content">
+      <!-- Контент задаётся из JS -->
+    </div>
+  </div>
+</div>
+
+<!-- Модальное окно переименования -->
+<div id="rename-modal" class="modal-overlay" onclick="if(event.target===this)closeRenameModal()">
+  <div class="modal">
+    <button class="modal-close" onclick="closeRenameModal()">×</button>
+    <div class="key-head">
+      <h4 class="key-title">Переименовать подписку</h4>
+      <p class="key-sub">Укажите удобное для вас название</p>
+    </div>
+    <div class="field">
+      <input type="text" id="rename-input" maxlength="100" placeholder="Например: Дом, Работа, Телефон">
+    </div>
+    <div id="rename-error" class="form-error hidden"></div>
+    <button id="rename-save-btn" onclick="submitRename()" class="btn btn-dark btn-block">Сохранить</button>
+  </div>
+</div>
+
 <script>
 const API_BASE = 'http://localhost:8000'; // Измените на ваш домен
 const TOKEN_KEY = 'awx_token';
@@ -406,6 +479,9 @@ const TOKEN_KEY = 'awx_token';
 const ICONS = {
   key: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/></svg>',
   renew: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  edit: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  chart: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 3v18h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 15l4-5 3 3 5-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  trash: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   box: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M3 8l9 5 9-5M12 13v8" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
   exclamation: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 8v5M12 16.5v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 2v4M16 2v4M3 10h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
@@ -432,6 +508,16 @@ function clearToken() {
   if (params.get('redirect') === 'buy') {
     const banner = document.getElementById('auth-banner');
     if (banner) banner.classList.remove('hidden');
+  }
+  // Подставляем реферальный код из URL (?ref=XXXX)
+  const refCode = params.get('ref');
+  if (refCode) {
+    const refInput = document.getElementById('register-referral');
+    if (refInput) refInput.value = refCode;
+    // Если пользователь не авторизован — переключаем на форму регистрации
+    if (!getToken()) {
+      setTimeout(function() { showAuthForm('register'); }, 50);
+    }
   }
 })();
 
@@ -563,6 +649,7 @@ async function handleRegister(e) {
   const email = document.getElementById('register-email').value.trim();
   const password = document.getElementById('register-password').value;
   const password2 = document.getElementById('register-password2').value;
+  const referralCode = document.getElementById('register-referral').value.trim();
   hideAuthError('register-error');
 
   if (password.length < 6) {
@@ -579,9 +666,25 @@ async function handleRegister(e) {
     const data = await apiFetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, referral_code: referralCode })
     });
     setToken(data.token);
+
+    // Применяем реферальный код через отдельный эндпоинт (если введён и не был применён при регистрации)
+    if (referralCode) {
+      try {
+        const refResult = await apiFetch('/api/referral/apply?code=' + encodeURIComponent(referralCode), { method: 'POST' });
+        if (refResult && !refResult.already_applied) {
+          showToast('Реферальный код применён!');
+        }
+      } catch (applyErr) {
+        // Если бэкенд уже применил код при регистрации — не критично
+        if (applyErr.status !== 400) {
+          showToast('Реферальный код не применён: ' + applyErr.message, 'error');
+        }
+      }
+    }
+
     await enterDashboard();
   } catch (err) {
     showAuthError('register-error', err.message);
@@ -618,8 +721,10 @@ function normalizeSubscription(sub) {
   return {
     id: String(sub.id || sub.subscription_id || sub.order_id || ''),
     tariff_name: tariffName(sub),
+    custom_name: sub.custom_name || sub.customName || '',
     status: String(sub.status || sub.subscription_status || 'unknown').toLowerCase(),
     expires_at: sub.expires_at || sub.expiration_date || sub.expiry_date || sub.expires || '',
+    created_at: sub.created_at || sub.created_date || sub.created || '',
     sub_url: sub.sub_url || sub.subscription_url || sub.link || sub.url || '',
     qr_base64: sub.qr_base64 || sub.qr_code || sub.qr || ''
   };
@@ -633,6 +738,8 @@ function getStatusInfo(sub) {
     status = 'active'; label = 'Активна'; pillClass = 'pill-active';
   } else if (['expired', 'ended'].includes(status)) {
     status = 'expired'; label = 'Истекла'; pillClass = 'pill-expired';
+  } else if (['deleted'].includes(status)) {
+    status = 'deleted'; label = 'Удалена'; pillClass = 'pill-expired';
   } else if (['pending', 'created', 'awaiting', 'awaiting_payment'].includes(status)) {
     status = 'pending'; label = 'Ожидает'; pillClass = 'pill-pending';
   } else {
@@ -694,6 +801,7 @@ async function enterDashboard() {
 
   await loadTrialStatus();
   await loadSubscriptions();
+  await loadReferral();
 }
 
 function extractSubscriptions(data) {
@@ -752,23 +860,34 @@ function renderSubscriptions(subs) {
 
   container.innerHTML = subs.map(sub => {
     const si = getStatusInfo(sub);
+    const displayName = sub.custom_name || sub.tariff_name;
+    const hasKey = !!(sub.sub_url);
+    const manageable = hasKey || ['active', 'paid', 'expired'].includes(si.status);
     return `
       <div class="sub-card">
         <div class="sub-left">
           <div class="sub-icon">${ICONS.key}</div>
           <div style="min-width:0;">
             <div class="sub-name-row">
-              <h3 class="sub-name">${escapeHtml(sub.tariff_name)}</h3>
+              <h3 class="sub-name">${escapeHtml(displayName)}</h3>
               <span class="pill ${si.pillClass}">${si.label}</span>
             </div>
+            ${sub.custom_name ? `<p class="sub-date">${ICONS.box}${escapeHtml(sub.tariff_name)}</p>` : ''}
             <p class="sub-date">${ICONS.calendar} Действует до: ${formatDate(sub.expires_at)}</p>
           </div>
         </div>
+        ${manageable ? `
         <div class="sub-actions">
-          <button data-action="show-key" data-id="${escapeHtml(sub.id)}" class="btn btn-dark">${ICONS.key}Показать ключ</button>
+          ${hasKey ? `
+          <button data-action="show-key" data-id="${escapeHtml(sub.id)}" class="btn btn-dark">${ICONS.key}Показать ключ</button>` : ''}
           ${si.status === 'active' ? `
           <button data-action="renew" data-id="${escapeHtml(sub.id)}" class="btn btn-outline">${ICONS.renew}Продлить</button>` : ''}
-        </div>
+          ${hasKey ? `
+          <button data-action="rekey" data-id="${escapeHtml(sub.id)}" class="btn btn-outline" title="Перевыпустить ключ">${ICONS.renew}Перевыпустить</button>
+          <button data-action="rename" data-id="${escapeHtml(sub.id)}" data-current-name="${escapeHtml(displayName)}" class="btn btn-outline" title="Переименовать подписку">${ICONS.edit}Переименовать</button>
+          <button data-action="stats" data-id="${escapeHtml(sub.id)}" class="btn btn-outline" title="Статистика">${ICONS.chart}Статистика</button>
+          <button data-action="delete" data-id="${escapeHtml(sub.id)}" class="btn btn-outline btn-danger" title="Удалить подписку">${ICONS.trash}Удалить</button>` : ''}
+        </div>` : ''}
       </div>
     `;
   }).join('');
@@ -957,6 +1076,284 @@ async function renewSubscription(id, btn) {
   }
 }
 
+// ————————————————— СТАТИСТИКА —————————————————
+
+function formatBytes(bytes) {
+  bytes = Number(bytes) || 0;
+  const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+  let i = 0;
+  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+  const val = bytes >= 100 || i === 0 ? bytes.toFixed(0) : bytes.toFixed(1);
+  return val + ' ' + units[i];
+}
+
+function closeStatsModal() {
+  document.getElementById('stats-modal').classList.remove('active');
+}
+
+async function showStats(id) {
+  document.getElementById('stats-modal').classList.add('active');
+  document.getElementById('stats-modal-content').innerHTML = `
+    <div class="load-block">
+      <div class="spinner"></div>
+      <p>Загрузка статистики...</p>
+    </div>
+  `;
+
+  try {
+    const data = await apiFetch('/api/account/subscription/' + encodeURIComponent(id) + '/stats');
+    const stateLabels = { active: 'Активна', expired: 'Истекла', disabled: 'Отключена' };
+    const stateLabel = stateLabels[data.state] || data.state || '—';
+    document.getElementById('stats-modal-content').innerHTML = `
+      <div class="key-head">
+        <h4 class="key-title">Статистика подписки</h4>
+        <p class="key-sub">Данные по ключу на текущий момент</p>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <span class="stat-label">Использовано</span>
+          <span class="stat-value">${formatBytes(data.used_bytes)}</span>
+          <span class="stat-sub">${data.total_gb ? 'из ' + escapeHtml(String(data.total_gb)) + ' ГБ' : 'безлимит'}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Статус</span>
+          <span class="stat-value">${escapeHtml(stateLabel)}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Дата создания</span>
+          <span class="stat-value">${formatDate(data.created_at)}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Действует до</span>
+          <span class="stat-value">${formatDate(data.expires_at)}</span>
+        </div>
+      </div>
+      <button onclick="closeStatsModal()" class="btn btn-outline btn-block">Закрыть</button>
+    `;
+  } catch (e) {
+    document.getElementById('stats-modal-content').innerHTML = `
+      <div class="modal-error">
+        <div class="empty-icon error-icon">${ICONS.exclamation}</div>
+        <p class="modal-error-title">Не удалось получить статистику</p>
+        <p class="modal-error-text">${escapeHtml(e.message)}</p>
+        <button onclick="closeStatsModal()" class="btn btn-outline">Закрыть</button>
+      </div>
+    `;
+  }
+}
+
+// ————————————————— ПЕРЕИМЕНОВАНИЕ —————————————————
+
+let renameOrderId = null;
+
+function openRenameModal(id, currentName) {
+  renameOrderId = id;
+  document.getElementById('rename-input').value = currentName || '';
+  const err = document.getElementById('rename-error');
+  err.classList.add('hidden');
+  err.textContent = '';
+  document.getElementById('rename-modal').classList.add('active');
+}
+
+function closeRenameModal() {
+  document.getElementById('rename-modal').classList.remove('active');
+  renameOrderId = null;
+}
+
+async function submitRename() {
+  const name = document.getElementById('rename-input').value.trim();
+  const err = document.getElementById('rename-error');
+  if (!name) {
+    err.textContent = 'Введите название подписки';
+    err.classList.remove('hidden');
+    return;
+  }
+  setButtonLoading('rename-save-btn', true, 'Сохранение...');
+  try {
+    await apiFetch('/api/account/subscription/' + encodeURIComponent(renameOrderId) + '/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    closeRenameModal();
+    showToast('Подписка переименована');
+    await loadSubscriptions();
+  } catch (e) {
+    err.textContent = e.message;
+    err.classList.remove('hidden');
+  } finally {
+    setButtonLoading('rename-save-btn', false);
+  }
+}
+
+// ————————————————— ПЕРЕВЫПУСК КЛЮЧА —————————————————
+
+async function rekeySubscription(id, btn) {
+  if (!confirm('Перевыпустить ключ? Старый ключ перестанет работать, трафик и настройки сохранятся.')) return;
+  const original = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    btn.innerHTML = '<span class="btn-spinner"></span>Перевыпуск...';
+  }
+  try {
+    const data = await apiFetch('/api/account/subscription/' + encodeURIComponent(id) + '/rekey', { method: 'POST' });
+    showToast('Ключ перевыпущен');
+    if (data && data.sub_url) {
+      const cached = subscriptionsCache.find(s => s.id === String(id));
+      renderKeyModal(normalizeSubscription({
+        id: data.order_id,
+        tariff_name: cached ? cached.tariff_name : 'Подписка',
+        custom_name: cached ? cached.custom_name : '',
+        sub_url: data.sub_url,
+        qr_base64: data.qr_base64,
+        expires_at: data.expires_at
+      }));
+      openKeyModal();
+    }
+    await loadSubscriptions();
+  } catch (e) {
+    showToast('Не удалось перевыпустить: ' + e.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('btn-loading');
+      btn.innerHTML = original;
+    }
+  }
+}
+
+// ————————————————— УДАЛЕНИЕ —————————————————
+
+async function deleteSubscription(id, btn) {
+  if (!confirm('Удалить подписку? Ключ будет удалён из панели. Действие необратимо.')) return;
+  const original = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    btn.innerHTML = '<span class="btn-spinner"></span>Удаление...';
+  }
+  try {
+    await apiFetch('/api/account/subscription/' + encodeURIComponent(id), { method: 'DELETE' });
+    showToast('Подписка удалена');
+    await loadSubscriptions();
+  } catch (e) {
+    showToast('Не удалось удалить: ' + e.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('btn-loading');
+      btn.innerHTML = original;
+    }
+  }
+}
+
+// ————————————————— РЕФЕРАЛЬНАЯ ПРОГРАММА —————————————————
+
+let referralLink = '';
+
+async function loadReferral() {
+  const container = document.getElementById('referral-container');
+  container.innerHTML = `
+    <div class="load-block" style="padding:24px 0;">
+      <div class="spinner"></div>
+      <p>Загрузка реферальной информации...</p>
+    </div>
+  `;
+  try {
+    const [codeData, stats] = await Promise.all([
+      apiFetch('/api/referral/code'),
+      apiFetch('/api/referral/stats')
+    ]);
+    renderReferral(container, codeData, stats);
+  } catch (e) {
+    if (e.status === 401) {
+      clearToken();
+      showAuthSection();
+      return;
+    }
+    // Ошибка загрузки — скрываем секцию тихо
+    container.innerHTML = '';
+  }
+}
+
+function renderReferral(container, codeData, stats) {
+  if (codeData && codeData.enabled === false) {
+    container.innerHTML = `
+      <div class="ref-card">
+        <div class="ref-info">
+          <h3>Реферальная программа</h3>
+          <p>Временно недоступна. Загляните позже.</p>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const code = codeData.code || '';
+  referralLink = codeData.link || '';
+  const percent = (codeData.bonus_percent || stats.bonus_percent || 10);
+  const invited = stats.invited_count || 0;
+  const rewardDays = stats.total_reward_days || 0;
+  const list = stats.referrals || [];
+
+  container.innerHTML = `
+    <div class="ref-card">
+      <div class="ref-main">
+        <div class="ref-info">
+          <h3>Приглашайте друзей -- получайте бонусы</h3>
+          <p>За каждую оплату подписки приглашённым вы получаете <strong>${escapeHtml(percent)}%</strong> от дней подписки бонусом на свой аккаунт.</p>
+        </div>
+        <div class="ref-stats">
+          <div class="ref-stat">
+            <div class="ref-stat-num">${invited}</div>
+            <div class="ref-stat-label">приглашено</div>
+          </div>
+          <div class="ref-stat">
+            <div class="ref-stat-num">${rewardDays}</div>
+            <div class="ref-stat-label">бонусных дней</div>
+          </div>
+        </div>
+      </div>
+      <div class="ref-link-box">
+        <div class="ref-link-head">
+          <span>Ваша реферальная ссылка</span>
+          <button onclick="copyReferralLink()" class="key-copy">${ICONS.copy}Скопировать</button>
+        </div>
+        <div class="ref-link">${escapeHtml(referralLink || code)}</div>
+      </div>
+      ${list.length ? `
+        <div class="ref-list">
+          <div class="ref-list-head">Приглашённые</div>
+          ${list.map(item => `
+            <div class="ref-row">
+              <span>${escapeHtml(item.masked_email || 'Пользователь')}</span>
+              <span class="ref-row-date">${formatDate(item.created_at)}</span>
+              <span class="ref-row-days">+${item.reward_days || 0} дн.</span>
+            </div>
+          `).join('')}
+        </div>` : ''}
+    </div>
+  `;
+}
+
+async function copyReferralLink() {
+  if (!referralLink) return;
+  try {
+    await navigator.clipboard.writeText(referralLink);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = referralLink;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+  showToast('Ссылка скопирована');
+}
+
 // ————————————————— СОБЫТИЯ —————————————————
 
 // Делегирование кликов по кнопкам в карточках подписок и триале
@@ -967,11 +1364,19 @@ document.addEventListener('click', (e) => {
   const id = btn.dataset.id;
   if (action === 'show-key') showKey(id);
   else if (action === 'renew') renewSubscription(id, btn);
+  else if (action === 'rekey') rekeySubscription(id, btn);
+  else if (action === 'rename') openRenameModal(id, btn.dataset.currentName || '');
+  else if (action === 'stats') showStats(id);
+  else if (action === 'delete') deleteSubscription(id, btn);
 });
 
-// Закрытие модалки по Escape
+// Закрытие модалок по Escape
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeKeyModal();
+  if (e.key === 'Escape') {
+    closeKeyModal();
+    closeStatsModal();
+    closeRenameModal();
+  }
 });
 
 // Scroll effect for header
@@ -985,6 +1390,24 @@ window.addEventListener('scroll', () => {
 async function init() {
   if (getToken()) {
     await enterDashboard();
+    // Автоприменение реферального кода для уже авторизованных пользователей
+    const params = new URLSearchParams(window.location.search);
+    const refCode = params.get('ref');
+    if (refCode) {
+      try {
+        const result = await apiFetch('/api/referral/apply?code=' + encodeURIComponent(refCode), { method: 'POST' });
+        if (result && !result.already_applied) {
+          showToast('Реферальный код применён!');
+          await loadReferral();
+        }
+      } catch (e) {
+        // Тихо игнорируем (код уже применён, или невалиден)
+      }
+      // Чистим URL от параметра ref
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
   } else {
     showAuthSection();
   }

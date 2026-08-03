@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import html
 import json
+import math
 import qrcode
 import base64
 import aiosqlite
@@ -19,25 +20,42 @@ from pydantic import BaseModel
 
 from config import settings
 from database import (
-    init_db, create_order, get_order, save_platega_tx,
+    init_db, load_runtime_settings, create_order, get_order, save_platega_tx,
     mark_paid, save_subscription, get_order_by_tx, mark_order_error,
     get_user_subscriptions, get_user_order, set_order_user,
-    claim_trial,
+    claim_trial, set_order_custom_name, mark_order_deleted,
+    get_user_by_referral_code, apply_referral_code, ensure_referral_code,
+    count_referrals, sum_reward_days, get_referral_list,
+    get_referral_levels, get_user_referrer, get_active_subscription,
+    add_referral_reward, get_setting, get_user_by_id,
 )
 from platega_client import create_payment, check_status, PlategaError
 from xui_client import (
     create_client, get_subscription_url, _parse_inbound_ids,
     get_sub_links, renew_client, check_client_status,
+    delete_client, rekey_client,
     XuiError,
 )
 from admin import admin_router
-from auth import auth_router, get_optional_user, require_verified_email
+from auth import auth_router, get_optional_user, require_verified_email, get_current_user
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 # Rate limiting — хранилище запросов по IP
 rate_limit_storage = defaultdict(list)
+
+
+def get_real_ip(request: Request) -> str:
+    """Извлекает реальный IP клиента из proxy-заголовков (X-Forwarded-For / X-Real-IP)."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        # X-Forwarded-For: client, proxy1, proxy2 — берём первый (реальный IP)
+        return xff.split(",")[0].strip()
+    xri = request.headers.get("x-real-ip", "")
+    if xri:
+        return xri.strip()
+    return request.client.host if request.client else "0.0.0.0"
 
 
 def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) -> bool:
@@ -81,7 +99,8 @@ def verify_platega_webhook(headers: dict) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    logger.info("Database initialized")
+    await load_runtime_settings()
+    logger.info("Database initialized, runtime settings loaded")
     yield
 
 
@@ -96,7 +115,7 @@ except (AttributeError, json.JSONDecodeError):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
     allow_credentials=True,
 )
@@ -134,6 +153,10 @@ app.include_router(auth_router)
 account_router = APIRouter(prefix="/api/account", tags=["account"])
 
 
+class RenameSubscriptionRequest(BaseModel):
+    name: str
+
+
 @account_router.get("/subscriptions")
 async def get_subscriptions(user: dict = Depends(get_optional_user)):
     """Список подписок пользователя. Требует авторизации."""
@@ -148,6 +171,7 @@ async def get_subscriptions(user: dict = Depends(get_optional_user)):
             "sub_url": o.get("sub_url"),
             "expires_at": o.get("expires_at"),
             "created_at": o["created_at"],
+            "custom_name": o.get("custom_name"),
         }
         for o in orders
     ]
@@ -168,6 +192,7 @@ async def get_subscription_detail(order_id: str, user: dict = Depends(get_option
         "sub_url": order.get("sub_url"),
         "expires_at": order.get("expires_at"),
         "created_at": order["created_at"],
+        "custom_name": order.get("custom_name"),
     }
     if order.get("sub_url"):
         result["qr_base64"] = _make_qr_base64(order["sub_url"])
@@ -206,11 +231,163 @@ async def renew_subscription(order_id: str, user: dict = Depends(get_optional_us
         raise HTTPException(500, f"Ошибка продления: {e}")
 
 
+@account_router.post("/subscription/{order_id}/rekey")
+async def rekey_subscription(order_id: str, user: dict = Depends(require_verified_email)):
+    """Перевыпуск ключа: новый sub_id и sub_url. Требует авторизации."""
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    if not order.get("xui_email") or not order.get("xui_sub_id"):
+        raise HTTPException(400, "Нет привязки к 3x-UI клиенту")
+
+    tariff = settings.tariffs.get(order["tariff"])
+    days = tariff["days"] if tariff else 30
+    devices = tariff["devices"] if tariff else 1
+
+    # Сохраняем текущую дату истечения (перевыпуск НЕ продлевает подписку)
+    expiry_ms = None
+    if order.get("expires_at"):
+        try:
+            parsed = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
+            if parsed > datetime.utcnow():
+                expiry_ms = int(parsed.timestamp() * 1000)
+        except ValueError:
+            pass
+    if expiry_ms is None:
+        expiry_ms = int((datetime.utcnow() + timedelta(days=days)).timestamp() * 1000)
+
+    # Новый уникальный email клиента в 3x-UI
+    new_email = f"rekey-{order_id}-{uuid.uuid4().hex[:4]}@vpn.local"
+
+    try:
+        result = await rekey_client(
+            old_email=order["xui_email"],
+            new_email=new_email,
+            expiry_ms=expiry_ms,
+            limit_ip=devices,
+        )
+        sub_url = await get_subscription_url(result["sub_id"])
+        expires_at = datetime.utcfromtimestamp(expiry_ms / 1000).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        await save_subscription(
+            order_id, result["email"], result["sub_id"], sub_url,
+            inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
+            expires_at=expires_at,
+        )
+        logger.info("Rekey: order %s new sub_id=%s", order_id, result["sub_id"])
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "email": result["email"],
+            "sub_id": result["sub_id"],
+            "sub_url": sub_url,
+            "expires_at": expires_at,
+            "qr_base64": _make_qr_base64(sub_url),
+        }
+    except XuiError as e:
+        logger.error("Rekey failed for order %s: %s", order_id, e)
+        raise HTTPException(502, f"Ошибка перевыпуска ключа: {e}")
+
+
+@account_router.post("/subscription/{order_id}/rename")
+async def rename_subscription(
+    order_id: str,
+    req: RenameSubscriptionRequest,
+    user: dict = Depends(require_verified_email),
+):
+    """Переименование подписки (пользовательское имя). Требует авторизации."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "Имя подписки не может быть пустым")
+    if len(name) > 100:
+        raise HTTPException(400, "Имя подписки слишком длинное (максимум 100 символов)")
+
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+
+    await set_order_custom_name(order_id, name)
+    logger.info("Order %s renamed to %r by user %s", order_id, name, user["id"])
+    return {"ok": True, "order_id": order_id, "custom_name": name}
+
+
+@account_router.get("/subscription/{order_id}/stats")
+async def get_subscription_stats(order_id: str, user: dict = Depends(get_optional_user)):
+    """Статистика ключа: трафик, даты, статус. Требует авторизации."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    if not order.get("xui_email"):
+        raise HTTPException(400, "Нет привязки к 3x-UI клиенту")
+
+    try:
+        status = await check_client_status(order["xui_email"])
+    except XuiError as e:
+        logger.error("Stats failed for order %s: %s", order_id, e)
+        raise HTTPException(502, f"Ошибка получения статистики: {e}")
+
+    used_bytes = int(status.get("up", 0) or 0) + int(status.get("down", 0) or 0)
+    total_bytes = int(status.get("total_gb", 0) or 0)
+    expiry_ms = int(status.get("expiry_ms", 0) or 0)
+    now_ms = int(datetime.utcnow().timestamp() * 1000)
+
+    if status.get("enable") is False:
+        client_state = "disabled"
+    elif expiry_ms and expiry_ms < now_ms:
+        client_state = "expired"
+    else:
+        client_state = "active"
+
+    return {
+        "ok": True,
+        "order_id": order_id,
+        "email": status["email"],
+        "state": client_state,
+        "enable": status.get("enable"),
+        "used_bytes": used_bytes,
+        "used_gb": round(used_bytes / 1073741824, 2),
+        "total_bytes": total_bytes,
+        "total_gb": round(total_bytes / 1073741824, 2) if total_bytes else None,
+        "created_at": order.get("created_at"),
+        "expires_at": order.get("expires_at"),
+        "expiry_ms": expiry_ms,
+        "status": order.get("status"),
+    }
+
+
+@account_router.delete("/subscription/{order_id}")
+async def delete_subscription(order_id: str, user: dict = Depends(require_verified_email)):
+    """Удаление подписки: удаляет клиента из 3x-UI, помечает заказ deleted."""
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+
+    if order.get("xui_email"):
+        try:
+            await delete_client(order["xui_email"])
+        except XuiError as e:
+            msg = str(e).lower()
+            if "not found" in msg or "not exist" in msg:
+                logger.info("Delete client for order %s already gone: %s", order_id, e)
+            else:
+                logger.error("Delete client failed for order %s: %s", order_id, e)
+                raise HTTPException(502, f"Ошибка удаления ключа из панели: {e}")
+
+    await mark_order_deleted(order_id)
+    logger.info("Subscription %s deleted by user %s", order_id, user["id"])
+    return {"ok": True, "order_id": order_id}
+
+
 @account_router.get("/trial")
 async def get_trial_status(user: dict = Depends(get_optional_user)):
     """Статус пробного периода для текущего пользователя."""
     if not user:
         return {"status": "unavailable", "message": "Требуется авторизация"}
+    if not settings.trial_enabled:
+        return {"status": "unavailable", "message": "Пробный период отключён"}
 
     trial_started = user.get("trial_started_at")
     trial_expires = user.get("trial_expires_at")
@@ -248,8 +425,10 @@ async def get_trial_status(user: dict = Depends(get_optional_user)):
 @account_router.post("/trial/activate")
 async def activate_trial(request: Request, user: dict = Depends(require_verified_email)):
     """Активировать пробный период: 3 дня, 25 ГБ, 1 устройство."""
+    if not settings.trial_enabled:
+        raise HTTPException(403, "Пробный период отключён")
     # IP rate limiting: 1 триал на IP в 24 часа
-    client_ip = request.client.host
+    client_ip = get_real_ip(request)
     if not check_rate_limit(client_ip, max_requests=1, window_minutes=1440):
         logger.warning("Trial rate limit exceeded for IP: %s", client_ip)
         raise HTTPException(429, "Пробный период уже был активирован. Попробуйте позже.")
@@ -295,6 +474,136 @@ async def activate_trial(request: Request, user: dict = Depends(require_verified
 app.include_router(account_router)
 
 
+# ————————————————— РЕФЕРАЛЬНАЯ ПРОГРАММА —————————————————
+referral_router = APIRouter(prefix="/api/referral", tags=["referral"])
+
+
+@referral_router.get("/code")
+async def api_referral_code(user: dict = Depends(get_current_user)):
+    """Свой реферальный код и ссылка."""
+    code = await ensure_referral_code(user["id"])
+    if not code:
+        raise HTTPException(404, "Пользователь не найден")
+    enabled = (await get_setting("referral_enabled", "1")) == "1"
+    bonus_percent = int(await get_setting("bonus_percent", "10") or 0)
+    base = settings.site_base_url.rstrip("/")
+    return {
+        "code": code,
+        "link": f"{base}/?ref={code}",
+        "enabled": enabled,
+        "bonus_percent": bonus_percent,
+    }
+
+
+@referral_router.get("/stats")
+async def api_referral_stats(user: dict = Depends(get_current_user)):
+    """Статистика: сколько приглашено, сколько бонусных дней начислено."""
+    invited_count = await count_referrals(user["id"])
+    total_reward_days = await sum_reward_days(user["id"])
+    referrals = await get_referral_list(user["id"])
+    return {
+        "invited_count": invited_count,
+        "total_reward_days": total_reward_days,
+        "referrals": referrals,
+        "bonus_percent": int(await get_setting("bonus_percent", "10") or 0),
+        "enabled": (await get_setting("referral_enabled", "1")) == "1",
+    }
+
+
+@referral_router.post("/apply")
+async def api_referral_apply(code: str, user: dict = Depends(get_current_user)):
+    """Применить реферальный код (например, сразу после регистрации)."""
+    code = (code or "").strip().upper()
+    if not code:
+        raise HTTPException(400, "Укажите реферальный код")
+    if (await get_setting("referral_enabled", "1")) != "1":
+        raise HTTPException(400, "Реферальная программа отключена")
+    referrer = await get_user_by_referral_code(code)
+    if not referrer:
+        raise HTTPException(404, "Реферальный код не найден")
+    if referrer["id"] == user["id"]:
+        raise HTTPException(400, "Нельзя применить собственный реферальный код")
+    ok = await apply_referral_code(user["id"], referrer["id"])
+    return {
+        "ok": True,
+        "already_applied": not ok,
+        "referrer_id": referrer["id"],
+    }
+
+
+app.include_router(referral_router)
+
+
+async def process_referral_rewards(order_id: str):
+    """
+    Начисляет бонусные дни реферерам после успешной оплаты заказа.
+    Проходит до 3 уровней вверх по цепочке приглашений.
+    """
+    order = await get_order(order_id)
+    if not order:
+        return
+    payer_id = order.get("user_id")
+    if not payer_id:
+        return
+
+    tariff = settings.tariffs.get(order["tariff"])
+    days = tariff["days"] if tariff else 30
+
+    levels = await get_referral_levels()
+    if not levels:
+        return
+
+    current_id = payer_id
+    for level_num, percent in levels:
+        referrer_id = await get_user_referrer(current_id)
+        if not referrer_id:
+            break
+        reward_days = math.ceil(days * percent / 100)
+        if reward_days > 0:
+            await _grant_referral_days(referrer_id, payer_id, order_id, reward_days)
+        current_id = referrer_id
+
+
+async def _grant_referral_days(
+    referrer_id: str, referred_id: str, source_order_id: str, reward_days: int
+):
+    """
+    Начисляет referrer'у reward_days бонусных дней:
+    1) продлевает последнюю активную подписку в 3x-UI (если есть);
+    2) фиксирует начисление в таблице referrals (для статистики).
+    """
+    granted = False
+    sub = await get_active_subscription(referrer_id)
+    if sub and sub.get("xui_email"):
+        try:
+            result = await renew_client(sub["xui_email"], reward_days)
+            new_expires = datetime.utcfromtimestamp(
+                result["new_expiry_ms"] / 1000
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            async with aiosqlite.connect(settings.database_path) as db:
+                await db.execute(
+                    "UPDATE orders SET expires_at = ? WHERE id = ?",
+                    (new_expires, sub["id"]),
+                )
+                await db.commit()
+            granted = True
+        except XuiError as e:
+            logger.error(
+                "Referral reward renew failed: referrer=%s order=%s: %s",
+                referrer_id, source_order_id, e,
+            )
+        except Exception as e:
+            logger.error(
+                "Referral reward error: referrer=%s: %s", referrer_id, e,
+            )
+
+    await add_referral_reward(referrer_id, referred_id, reward_days)
+    logger.info(
+        "Referral reward: referrer=%s referred=%s days=%s order=%s granted=%s",
+        referrer_id, referred_id, reward_days, source_order_id, granted,
+    )
+
+
 # ————————————————— МОДЕЛИ —————————————————
 
 class CreateOrderRequest(BaseModel):
@@ -312,6 +621,14 @@ async def list_tariffs():
     ]
 
 
+@app.get("/api/config")
+async def api_config():
+    """Публичная конфигурация витрины. demo_mode=true → показать кнопку «Демо подписка»."""
+    return {
+        "demo_mode": settings.demo_mode,
+    }
+
+
 @app.post("/api/order/create")
 async def api_create_order(req: CreateOrderRequest, request: Request, user: dict = Depends(get_optional_user)):
     """
@@ -320,7 +637,7 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     Если пользователь авторизован — привязывает заказ к аккаунту.
     """
     # Rate limiting: 10 заказов в час с одного IP
-    client_ip = request.client.host
+    client_ip = get_real_ip(request)
     if not check_rate_limit(client_ip, max_requests=10, window_minutes=60):
         logger.warning("Rate limit exceeded for IP: %s", client_ip)
         raise HTTPException(429, "Слишком много запросов. Попробуйте позже.")
@@ -360,7 +677,17 @@ async def api_demo_order(req: CreateOrderRequest, request: Request, user: dict =
     """
     ДЕМО-оплата — создает заказ и сразу выдаёт ключ без реальной оплаты.
     Используйте только для тестирования!
+    В продакшене отключается через DEMO_MODE=false в .env.
     """
+    if not settings.demo_mode:
+        raise HTTPException(404, "Демо-режим отключён")
+
+    # Rate-limit: 3 demo-заказа в час с одного IP (защита от абьюза)
+    client_ip = get_real_ip(request)
+    if not check_rate_limit(client_ip, max_requests=3, window_minutes=60):
+        logger.warning("Demo rate limit exceeded for IP: %s", client_ip)
+        raise HTTPException(429, "Слишком много демо-запросов. Попробуйте позже.")
+
     tariff = settings.tariffs.get(req.tariff)
     if not tariff:
         raise HTTPException(400, "Неизвестный тариф")
@@ -398,7 +725,7 @@ async def api_order_status(order_id: str, request: Request):
     Возвращает sub-ссылку, если ключ уже создан.
     """
     # Rate limiting: 30 запросов в минуту с одного IP
-    client_ip = request.client.host
+    client_ip = get_real_ip(request)
     if not check_rate_limit(client_ip, max_requests=30, window_minutes=1):
         logger.warning("Rate limit exceeded for status endpoint, IP: %s", client_ip)
         raise HTTPException(429, "Слишком много запросов. Попробуйте позже.")
@@ -562,6 +889,14 @@ async def fulfill_order(order_id: str):
             "Order %s fulfilled successfully: email=%s sub_url=%s",
             order_id, email, sub_url[:80],
         )
+
+        # Начисляем бонусные дни реферерам
+        try:
+            await process_referral_rewards(order_id)
+        except Exception as e:
+            logger.error(
+                "Referral rewards failed for order %s: %s", order_id, e
+            )
 
     except XuiError as e:
         # Логируем ошибку, заказ остаётся в статусе 'paid'
