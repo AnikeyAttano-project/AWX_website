@@ -1021,19 +1021,26 @@ HTML_TEMPLATE_STR = """
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
     <div class="bg-white rounded-lg shadow-lg p-8 max-w-2xl w-full">
         <h1 class="text-3xl font-bold text-green-600 mb-4">✅ Спасибо за покупку!</h1>
-        <p class="text-gray-700 mb-6">Ваш ключ готовится...</p>
+        <p class="text-gray-700 mb-2">Оплата получена. Ваш ключ готовится...</p>
+        <p class="text-gray-500 text-sm mb-6">Заказ: <strong>{{ order_id }}</strong></p>
+
+        <!-- Кнопка в ЛК — доступна СРАЗУ, не ждём загрузки ключа -->
+        <a href="/account.html" class="block w-full text-center bg-green-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-green-700 transition mb-6 text-lg">
+            🔑 Перейти в личный кабинет
+        </a>
 
         <div id="status" class="mb-6">
-            <p class="text-gray-500 text-sm mb-2">Номер заказа: <strong>{{ order_id }}</strong></p>
-            <div class="animate-pulse flex space-x-4">
-                <div class="flex-1 space-y-4 py-1">
-                    <div class="h-4 bg-gray-300 rounded w-3/4"></div>
-                    <div class="h-4 bg-gray-300 rounded"></div>
-                </div>
+            <div class="flex items-center gap-3 text-gray-500 text-sm">
+                <svg class="animate-spin h-5 w-5 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                <span id="status-text">Проверяем статус ключа...</span>
             </div>
         </div>
 
         <div id="result" class="hidden">
+            <div class="bg-green-50 border-l-4 border-green-500 p-4 mb-4">
+                <p class="text-sm text-green-700 font-semibold">🎉 Ключ уже готов! Вот ваша подписка:</p>
+            </div>
+
             <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
                 <p class="text-sm text-blue-700">
                     <strong>Ваша подписка:</strong><br>
@@ -1052,11 +1059,28 @@ HTML_TEMPLATE_STR = """
                 </p>
             </div>
 
-            <div class="bg-green-50 border-l-4 border-green-500 p-4">
+            <div class="bg-green-50 border-l-4 border-green-500 p-4 mb-4">
                 <p class="text-sm text-green-700">
                     <strong>📱 Инструкция:</strong> Скопируйте ссылку и вставьте в приложение для VPN.
                 </p>
             </div>
+
+            <a href="/account.html" class="block w-full text-center bg-gray-600 text-white font-medium py-2 px-4 rounded hover:bg-gray-700 transition">
+                Перейти в личный кабинет
+            </a>
+        </div>
+
+        <!-- Если ключ НЕ загрузился — показываем ссылку на ЛК -->
+        <div id="timeout-hint" class="hidden">
+            <div class="bg-amber-50 border-l-4 border-amber-400 p-4 mb-4">
+                <p class="text-sm text-amber-700">
+                    <strong>Ключ ещё готовится.</strong> Не переживайте — он уже в процессе.
+                    Вы можете забрать его в личном кабинете.
+                </p>
+            </div>
+            <a href="/account.html" class="block w-full text-center bg-green-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-green-700 transition">
+                🔑 Забрать ключ в личном кабинете
+            </a>
         </div>
     </div>
 
@@ -1064,34 +1088,37 @@ HTML_TEMPLATE_STR = """
         const orderId = "{{ order_id }}";
         const capabilityToken = "{{ capability_token }}";
         let attempts = 0;
-        const maxAttempts = 90; // 3 минуты вместо 1
+        const maxAttempts = 15; // 30 секунд — потом предлагаем ЛК
 
         async function checkStatus() {
             attempts++;
             try {
-                const tokenParam = capabilityToken ? `&token=${capabilityToken}` : '';
                 const resp = await fetch(`/api/order/${orderId}/status?token=${capabilityToken}`);
                 const data = await resp.json();
 
                 if (data.sub_url) {
+                    // Ключ готов — показываем сразу
                     document.getElementById("sub_url").textContent = data.sub_url;
                     document.getElementById("qr_code").src = "data:image/png;base64," + data.qr_base64;
                     document.getElementById("status").classList.add("hidden");
                     document.getElementById("result").classList.remove("hidden");
                 } else if (attempts < maxAttempts) {
+                    // Ещё ждём — обновляем текст
+                    const dots = '.'.repeat((attempts % 3) + 1);
+                    document.getElementById("status-text").textContent = `Проверяем статус ключа${dots}`;
                     setTimeout(checkStatus, 2000);
                 } else {
-                    document.getElementById("status").innerHTML = `
-                        <p class="text-red-600 mb-4">⏱ Ключ задерживается. Попробуйте обновить статус.</p>
-                        <p class="text-gray-500 text-sm mb-4">Ваш номер заказа: <strong>${orderId}</strong></p>
-                        <button onclick="checkStatus(); attempts = 0;" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">🔄 Обновить статус</button>
-                        <a href="/account.html" class="ml-2 bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 inline-block">Личный кабинет</a>
-                    `;
+                    // 30 секунд прошли — предлагаем ЛК
+                    document.getElementById("status").classList.add("hidden");
+                    document.getElementById("timeout-hint").classList.remove("hidden");
                 }
             } catch (e) {
                 console.error(e);
                 if (attempts < maxAttempts) {
                     setTimeout(checkStatus, 2000);
+                } else {
+                    document.getElementById("status").classList.add("hidden");
+                    document.getElementById("timeout-hint").classList.remove("hidden");
                 }
             }
         }
