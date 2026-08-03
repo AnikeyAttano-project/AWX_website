@@ -206,9 +206,54 @@ async def renew_subscription(order_id: str, user: dict = Depends(get_optional_us
         raise HTTPException(500, f"Ошибка продления: {e}")
 
 
+@account_router.get("/trial")
+async def get_trial_status(user: dict = Depends(get_optional_user)):
+    """Статус пробного периода для текущего пользователя."""
+    if not user:
+        return {"status": "unavailable", "message": "Требуется авторизация"}
+
+    trial_started = user.get("trial_started_at")
+    trial_expires = user.get("trial_expires_at")
+
+    if not trial_started:
+        return {
+            "status": "available",
+            "trial_days": settings.trial_days,
+            "trial_gb": settings.trial_gb,
+        }
+
+    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    is_active = trial_expires and trial_expires > now_str
+
+    if is_active:
+        # Найти order_id триала для кнопки "Показать ключ"
+        orders = await get_user_subscriptions(user["id"])
+        trial_order = next((o for o in orders if o["tariff"] == "trial"), None)
+        return {
+            "status": "active",
+            "trial_days": settings.trial_days,
+            "trial_gb": settings.trial_gb,
+            "expires_at": trial_expires,
+            "order_id": trial_order["id"] if trial_order else None,
+        }
+    else:
+        return {
+            "status": "expired",
+            "trial_days": settings.trial_days,
+            "trial_gb": settings.trial_gb,
+            "expires_at": trial_expires,
+        }
+
+
 @account_router.post("/trial/activate")
-async def activate_trial(user: dict = Depends(require_verified_email)):
+async def activate_trial(request: Request, user: dict = Depends(require_verified_email)):
     """Активировать пробный период: 3 дня, 25 ГБ, 1 устройство."""
+    # IP rate limiting: 1 триал на IP в 24 часа
+    client_ip = request.client.host
+    if not check_rate_limit(client_ip, max_requests=1, window_minutes=1440):
+        logger.warning("Trial rate limit exceeded for IP: %s", client_ip)
+        raise HTTPException(429, "Пробный период уже был активирован. Попробуйте позже.")
+
     expires_at = (datetime.utcnow() + timedelta(days=settings.trial_days)).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
@@ -219,6 +264,8 @@ async def activate_trial(user: dict = Depends(require_verified_email)):
     await create_order(order_id, "trial", 0.0)
     await set_order_user(order_id, user["id"])
     await mark_paid(order_id)
+
+    logger.info("Trial activated: user=%s email=%s ip=%s", user["id"], user["email"], client_ip)
 
     try:
         client_data = await create_client(
