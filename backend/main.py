@@ -739,13 +739,16 @@ async def addon_status(addon_id: str, user: dict = Depends(get_optional_user)):
     if addon["user_id"] != user["id"]:
         raise HTTPException(403, "Доступ запрещён")
 
-    # Если pending — пробуем активировать (вдруг webhook опоздал)
-    if addon["status"] == "pending":
+    # Если pending — проверяем статус оплаты, и только тогда активируем
+    if addon["status"] == "pending" and addon.get("platega_tx_id"):
         try:
-            await fulfill_addon(addon_id)
-            addon = await get_addon_by_id(addon_id)
-        except Exception as e:
-            logger.error("Addon polling fulfill error: %s", e)
+            real_status = await check_status(addon["platega_tx_id"])
+            if real_status == "succeeded":
+                await fulfill_addon(addon_id)
+                addon = await get_addon_by_id(addon_id)
+            # Если не succeeded — оставляем pending, webhook/polling попробует снова
+        except PlategaError as e:
+            logger.error("Addon status polling: check_status failed for %s: %s", addon_id, e)
 
     return {
         "addon_id": addon["id"],
@@ -1120,7 +1123,29 @@ async def platega_webhook(request: Request):
     if not tx_id:
         return {"ok": False, "error": "no transaction id"}
 
-    # Баг2: Ищем add-on сначала по tx_id, потом по payload (fallback)
+    # 1. Реальный статус транзакции — вычисляем ОДИН раз, до любых веток
+    try:
+        real_status = await check_status(tx_id)
+    except PlategaError as e:
+        logger.error("Webhook check_status failed for tx=%s: %s", tx_id, e)
+        return {"ok": True, "msg": "check failed, polling fallback"}
+
+    if real_status != "succeeded":
+        logger.info("Payment not confirmed: tx=%s status=%s", tx_id, real_status)
+        if real_status in ("cancelled", "expired"):
+            # Проверяем — это add-on или обычный заказ?
+            addon = await get_addon_by_tx(tx_id)
+            if not addon and order_id:
+                addon_by_id = await get_addon_by_id(order_id)
+                if addon_by_id and addon_by_id.get("platega_tx_id") == tx_id:
+                    addon = addon_by_id
+            if addon:
+                logger.info("Addon payment cancelled/expired: id=%s", addon["id"])
+            else:
+                await mark_order_error(order_id, f"Payment {real_status}")
+        return {"ok": True, "msg": "not confirmed yet"}
+
+    # 2. Статус succeeded — ищем add-on или обычный заказ
     addon = await get_addon_by_tx(tx_id)
     if not addon and order_id:
         addon_by_id = await get_addon_by_id(order_id)
@@ -1128,15 +1153,10 @@ async def platega_webhook(request: Request):
             addon = addon_by_id
 
     if addon and addon["status"] == "pending":
-        if real_status == "succeeded":
-            await fulfill_addon(addon["id"])
-            return {"ok": True}
-        elif real_status in ("cancelled", "expired"):
-            logger.info("Addon payment %s: %s", addon["id"], real_status)
-            return {"ok": True}
-        return {"ok": True, "msg": "not confirmed yet"}
+        await fulfill_addon(addon["id"])
+        return {"ok": True}
 
-    # Находим заказ — либо по payload (order_id), либо по tx_id
+    # Обычный заказ
     order = await get_order(order_id) if order_id else None
     if not order:
         order = await get_order_by_tx(tx_id)
@@ -1144,21 +1164,8 @@ async def platega_webhook(request: Request):
         logger.warning("Order not found for tx=%s", tx_id)
         return {"ok": False, "error": "order not found"}
 
-    # Проверяем реальный статус через API (двойная проверка)
-    try:
-        real_status = await check_status(tx_id)
-    except PlategaError as e:
-        logger.error("Webhook check_status failed for tx=%s: %s (falling back to polling)", tx_id, e)
-        # Не крашим webhook — polling на странице успеха подхватит
-        return {"ok": True, "msg": "check failed, polling fallback"}
-
-    if real_status != "succeeded":
-        logger.info("Payment not confirmed: tx=%s status=%s", tx_id, real_status)
-        if real_status in ("cancelled", "expired"):
-            await mark_order_error(order_id, f"Payment {real_status}")
-        return {"ok": True, "msg": "not confirmed yet"}
-
     await fulfill_order(order["id"])
+    return {"ok": True}
 
 
 # ————————————————— FULFILL ADD-ON (с Lock) —————————————————

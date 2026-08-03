@@ -88,21 +88,6 @@ CREATE TABLE IF NOT EXISTS device_addons (
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (order_id) REFERENCES orders(id)
 );
-
-CREATE TABLE IF NOT EXISTS device_addons (
-    id              TEXT PRIMARY KEY,
-    user_id         TEXT NOT NULL,
-    order_id        TEXT NOT NULL,
-    addon_type      TEXT NOT NULL,
-    extra_devices   INTEGER NOT NULL,
-    amount_paid     REAL NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'active',
-    created_at      TEXT DEFAULT (datetime('now')),
-    expires_at      TEXT,
-    platega_tx_id   TEXT,
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (order_id) REFERENCES orders(id)
-);
 """
 
 
