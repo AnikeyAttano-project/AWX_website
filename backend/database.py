@@ -105,6 +105,11 @@ async def init_db():
             await db.execute("ALTER TABLE orders ADD COLUMN user_id TEXT")
         except Exception:
             pass
+        # Миграция: capability_token для защиты статуса заказа
+        try:
+            await db.execute("ALTER TABLE orders ADD COLUMN capability_token TEXT")
+        except Exception:
+            pass
         # Миграция: users — verified, trial
         try:
             await db.execute("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 1")
@@ -174,11 +179,11 @@ async def init_db():
         await db.commit()
 
 
-async def create_order(order_id: str, tariff: str, amount: float):
+async def create_order(order_id: str, tariff: str, amount: float, capability_token: str = ""):
     async with aiosqlite.connect(settings.database_path) as db:
         await db.execute(
-            "INSERT INTO orders (id, tariff, amount) VALUES (?, ?, ?)",
-            (order_id, tariff, amount),
+            "INSERT INTO orders (id, tariff, amount, capability_token) VALUES (?, ?, ?, ?)",
+            (order_id, tariff, amount, capability_token),
         )
         await db.commit()
 
@@ -315,20 +320,15 @@ async def set_user_verified(user_id: str):
 
 
 async def claim_trial(user_id: str, expires_at: str) -> bool:
-    """Atomically claim trial. Returns False if already used."""
+    """Claim trial. Returns False if already used. Uses atomic UPDATE ... WHERE to avoid TOCTOU race."""
     async with aiosqlite.connect(settings.database_path) as db:
         cur = await db.execute(
-            "SELECT trial_started_at FROM users WHERE id = ?", (user_id,)
-        )
-        row = await cur.fetchone()
-        if row and row[0]:
-            return False
-        await db.execute(
-            "UPDATE users SET trial_started_at = datetime('now'), trial_expires_at = ? WHERE id = ?",
+            "UPDATE users SET trial_started_at = datetime('now'), trial_expires_at = ? "
+            "WHERE id = ? AND (trial_started_at IS NULL OR trial_started_at = '')",
             (expires_at, user_id),
         )
         await db.commit()
-        return True
+        return cur.rowcount > 0
 
 
 # ————————————————— Account queries —————————————————

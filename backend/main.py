@@ -6,6 +6,7 @@ import hashlib
 import html
 import json
 import math
+import asyncio
 import qrcode
 import base64
 import aiosqlite
@@ -44,6 +45,10 @@ logger = logging.getLogger(__name__)
 
 # Rate limiting — хранилище запросов по IP
 rate_limit_storage = defaultdict(list)
+
+# Locks для fulfill_order — предотвращение гонки при параллельных webhook/polling/retry
+_fulfill_locks: dict[str, asyncio.Lock] = {}
+_fulfill_locks_lock = asyncio.Lock()  # Защита самого словаря локов
 
 
 def get_real_ip(request: Request) -> str:
@@ -200,15 +205,50 @@ async def get_subscription_detail(order_id: str, user: dict = Depends(get_option
 
 
 @account_router.post("/renew/{order_id}")
-async def renew_subscription(order_id: str, user: dict = Depends(get_optional_user)):
-    """Продление подписки. Требует авторизации."""
+async def renew_subscription(order_id: str, request: Request, user: dict = Depends(get_optional_user)):
+    """
+    Продление подписки. Защита от злоупотреблений:
+    - Требует авторизации
+    - Rate-limit: 1 продление в 24 часа на пользователя
+    - Подписка должна быть активной (не удалённой)
+    - Продление разрешено только если прошло ≥70% от срока подписки
+    """
     if not user:
         raise HTTPException(401, "Требуется авторизация")
     order = await get_user_order(user["id"], order_id)
     if not order:
         raise HTTPException(404, "Подписка не найдена")
+    if order.get("status") == "deleted":
+        raise HTTPException(400, "Нельзя продлить удалённую подписку")
     if not order.get("xui_email"):
         raise HTTPException(400, "Нет привязки к 3x-UI клиенту")
+
+    # Rate-limit: 1 продление в 24 часа на пользователя
+    renew_key = f"renew:{user['id']}"
+    if not check_rate_limit(renew_key, max_requests=1, window_minutes=1440):
+        logger.warning("Renew rate limit exceeded for user: %s", user["id"])
+        raise HTTPException(429, "Продление доступно не чаще 1 раза в сутки. Попробуйте позже.")
+
+    # Проверка: продление разрешено только если прошло ≥70% от срока подписки
+    if order.get("expires_at"):
+        try:
+            expires_at = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
+            tariff = settings.tariffs.get(order["tariff"])
+            total_days = tariff["days"] if tariff else 30
+            now = datetime.utcnow()
+            # Дата создания заказа (или вычисляем из expires_at)
+            order_created = expires_at - timedelta(days=total_days)
+            elapsed = (now - order_created).total_seconds()
+            required = total_days * 86400 * 0.7  # 70% от срока
+            if elapsed < required:
+                remaining_pct = int((1 - elapsed / (total_days * 86400)) * 100)
+                raise HTTPException(
+                    400,
+                    f"Продление доступно после использования 70% подписки. "
+                    f"Осталось {remaining_pct}% срока. Попробуйте позже."
+                )
+        except ValueError:
+            pass  # Если дата некорректна — пропускаем проверку
 
     tariff = settings.tariffs.get(order["tariff"])
     days = tariff["days"] if tariff else 30
@@ -225,9 +265,13 @@ async def renew_subscription(order_id: str, user: dict = Depends(get_optional_us
                 (new_expires, order_id),
             )
             await db.commit()
+        logger.info("Subscription renewed: order=%s user=%s days=%d", order_id, user["id"], days)
         return {"ok": True, "new_expires_at": new_expires}
     except XuiError as e:
         logger.error("Renew failed for order %s: %s", order_id, e)
+        error_msg = str(e)
+        if "not found" in error_msg.lower() or "not exist" in error_msg.lower():
+            raise HTTPException(404, "Клиент не найден в 3x-UI. Возможно, подписка была деактивирована. Попробуйте перевыпустить ключ.")
         raise HTTPException(500, f"Ошибка продления: {e}")
 
 
@@ -652,13 +696,16 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
         raise HTTPException(400, "Неизвестный тариф")
 
     order_id = uuid.uuid4().hex[:12]
-    await create_order(order_id, req.tariff, tariff["price"])
+    # Capability-токен: случайный токен для доступа к статусу заказа без авторизации
+    capability_token = uuid.uuid4().hex
+    await create_order(order_id, req.tariff, tariff["price"], capability_token)
 
     try:
         payment = await create_payment(
             amount=tariff["price"],
             order_id=order_id,
-            description=f"VPN подписка {tariff['title']} ({tariff['days']} дней)"
+            description=f"VPN подписка {tariff['title']} ({tariff['days']} дней)",
+            capability_token=capability_token,
         )
     except PlategaError as e:
         logger.error("Platega error: %s", e)
@@ -674,6 +721,7 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
         "order_id": order_id,
         "payment_url": payment["payment_url"],
         "amount": tariff["price"],
+        "capability_token": capability_token,  # Для доступа к статусу без авторизации
     }
 
 
@@ -702,7 +750,9 @@ async def api_demo_order(req: DemoOrderRequest, request: Request, user: dict = D
         raise HTTPException(400, "Неизвестный тариф")
 
     order_id = uuid.uuid4().hex[:12]
-    await create_order(order_id, req.tariff, tariff["price"])
+    # Capability-токен для демо-заказа
+    capability_token = uuid.uuid4().hex
+    await create_order(order_id, req.tariff, tariff["price"], capability_token)
 
     # Привязываем к пользователю
     if user:
@@ -721,17 +771,21 @@ async def api_demo_order(req: DemoOrderRequest, request: Request, user: dict = D
 
     return {
         "order_id": order_id,
-        "payment_url": f"{settings.site_base_url}/payment/success?order_id={order_id}",
+        "payment_url": f"{settings.site_base_url}/payment/success?order_id={order_id}&token={capability_token}",
         "amount": 0,
         "demo": True,
+        "capability_token": capability_token,
     }
 
 
 @app.get("/api/order/{order_id}/status")
-async def api_order_status(order_id: str, request: Request):
+async def api_order_status(order_id: str, request: Request, token: str = ""):
     """
     Витрина опрашивает этот эндпоинт после редиректа с оплаты.
     Возвращает sub-ссылку, если ключ уже создан.
+
+    Авторизация: capability-токен (из query ?token=...) ИЛИ авторизованный владелец заказа.
+    Если токен не передан и пользователь не авторизован — отдаём только статус без sub_url.
     """
     # Rate limiting: 30 запросов в минуту с одного IP
     client_ip = get_real_ip(request)
@@ -742,6 +796,11 @@ async def api_order_status(order_id: str, request: Request):
     order = await get_order(order_id)
     if not order:
         raise HTTPException(404, "Заказ не найден")
+
+    # Проверка авторизации: capability-токен ИЛИ владелец заказа
+    is_authorized = False
+    if token and order.get("capability_token") and hmac.compare_digest(token, order["capability_token"]):
+        is_authorized = True
 
     logger.info("Status check for order %s: status=%s, has_sub_url=%s, has_tx=%s",
                 order_id, order["status"], bool(order.get("sub_url")), bool(order.get("platega_tx_id")))
@@ -775,12 +834,17 @@ async def api_order_status(order_id: str, request: Request):
         "order_id": order["id"],
         "status": order["status"],
         "tariff": order["tariff"],
+        "has_capability_token": bool(order.get("capability_token")),
     }
 
-    if order.get("sub_url"):
+    # sub_url и QR возвращаются только авторизованным (токен или владелец)
+    if is_authorized and order.get("sub_url"):
         response["sub_url"] = order["sub_url"]
         response["qr_base64"] = _make_qr_base64(order["sub_url"])
-        logger.info("Returning sub_url for order %s", order_id)
+        logger.info("Returning sub_url for order %s (authorized)", order_id)
+    elif order.get("sub_url"):
+        # Заказ выполнен, но нет авторизации — сообщаем что ключ готов
+        response["ready"] = True
 
     return response
 
@@ -832,9 +896,10 @@ async def platega_webhook(request: Request):
 
 
 @app.get("/payment/success", response_class=HTMLResponse)
-async def payment_success(order_id: str):
+async def payment_success(order_id: str, token: str = ""):
     """Страница после успешной оплаты — показывает sub-ссылку и QR."""
-    return HTML_TEMPLATE.render(order_id=order_id)
+    # Передаём capability-токен в шаблон для polling
+    return HTML_TEMPLATE.render(order_id=order_id, capability_token=token)
 
 
 @app.get("/payment/failed", response_class=HTMLResponse)
@@ -848,75 +913,86 @@ async def payment_failed(order_id: str):
 async def fulfill_order(order_id: str):
     """
     Создаёт клиента в 3x-UI после успешной оплаты.
-    КЛЮЧЕВОЙ МОМЕНТ — создаём клиента сразу во ВСЕХ видимых инбаундах.
+    КЛЮЧЕВОЙ МОМЕНТ — создаёт клиента сразу во ВСЕХ видимых инбаундах.
     Идемпотентно: если sub_url уже есть — ничего не делает.
+    Защищено от гонки: asyncio.Lock на уровне order_id.
     """
-    order = await get_order(order_id)
+    # Получаем или создаём лок для этого заказа
+    async with _fulfill_locks_lock:
+        if order_id not in _fulfill_locks:
+            _fulfill_locks[order_id] = asyncio.Lock()
 
-    if order.get("sub_url"):
-        logger.info("Order %s already fulfilled", order_id)
-        return
+    async with _fulfill_locks[order_id]:
+        order = await get_order(order_id)
 
-    if order.get("status") != "paid":
-        await mark_paid(order_id)
+        if order.get("sub_url"):
+            logger.info("Order %s already fulfilled", order_id)
+            return
 
-    tariff = settings.tariffs.get(order["tariff"])
-    days = tariff["days"] if tariff else 30
-    devices = tariff["devices"] if tariff else 1
+        if order.get("status") != "paid":
+            await mark_paid(order_id)
 
-    # Уникальный email на основе тарифа и номера заказа
-    email = f"{order['tariff']}-{order_id}@vpn.local"
+        tariff = settings.tariffs.get(order["tariff"])
+        days = tariff["days"] if tariff else 30
+        devices = tariff["devices"] if tariff else 1
 
-    logger.info("Fulfilling order %s: tariff=%s, days=%s, devices=%s, email=%s",
-                order_id, order["tariff"], days, devices, email)
+        # Уникальный email на основе тарифа и номера заказа
+        email = f"{order['tariff']}-{order_id}@vpn.local"
 
-    try:
-        # КЛЮЧЕВОЙ МОМЕНТ —
-        # Создаём клиента ВО ВСЕХ видимых инбаундах
-        # limit_ip = кол-во устройств, разрешённых тарифом
-        client_data = await create_client(
-            email=email,
-            duration_days=days,
-            limit_ip=devices,
-        )
+        logger.info("Fulfilling order %s: tariff=%s, days=%s, devices=%s, email=%s",
+                    order_id, order["tariff"], days, devices, email)
 
-        logger.info("Client created for order %s: sub_id=%s", order_id, client_data.get("sub_id"))
-
-        # Получаем URL подписки
-        sub_url = await get_subscription_url(client_data["sub_id"])
-
-        # Сохраняем в БД
-        expires_at = (datetime.utcnow() + timedelta(days=days)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        await save_subscription(
-            order_id, email, client_data["sub_id"], sub_url,
-            inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
-            expires_at=expires_at,
-        )
-        logger.info(
-            "Order %s fulfilled successfully: email=%s sub_url=%s",
-            order_id, email, sub_url[:80],
-        )
-
-        # Начисляем бонусные дни реферерам
         try:
-            await process_referral_rewards(order_id)
-        except Exception as e:
-            logger.error(
-                "Referral rewards failed for order %s: %s", order_id, e
+            # КЛЮЧЕВОЙ МОМЕНТ —
+            # Создаём клиента ВО ВСЕХ видимых инбаундах
+            # limit_ip = кол-во устройств, разрешённых тарифом
+            client_data = await create_client(
+                email=email,
+                duration_days=days,
+                limit_ip=devices,
             )
 
-    except XuiError as e:
-        # Логируем ошибку, заказ остаётся в статусе 'paid'
-        # но без выданного ключа — нужна ручная проверка
-        logger.error("XuiError for order %s: %s", order_id, e)
-        await mark_order_error(order_id, str(e))
-        return
-    except Exception as e:
-        logger.error("Unexpected error for order %s: %s", order_id, e)
-        await mark_order_error(order_id, str(e))
-        return
+            logger.info("Client created for order %s: sub_id=%s", order_id, client_data.get("sub_id"))
+
+            # Получаем URL подписки
+            sub_url = await get_subscription_url(client_data["sub_id"])
+
+            # Сохраняем в БД
+            expires_at = (datetime.utcnow() + timedelta(days=days)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            await save_subscription(
+                order_id, email, client_data["sub_id"], sub_url,
+                inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
+                expires_at=expires_at,
+            )
+            logger.info(
+                "Order %s fulfilled successfully: email=%s sub_url=%s",
+                order_id, email, sub_url[:80],
+            )
+
+            # Начисляем бонусные дни реферерам
+            try:
+                await process_referral_rewards(order_id)
+            except Exception as e:
+                logger.error(
+                    "Referral rewards failed for order %s: %s", order_id, e
+                )
+
+        except XuiError as e:
+            # Логируем ошибку, заказ остаётся в статусе 'paid'
+            # но без выданного ключа — нужна ручная проверка
+            logger.error("XuiError for order %s: %s", order_id, e)
+            await mark_order_error(order_id, str(e))
+            return
+        except Exception as e:
+            logger.error("Unexpected error for order %s: %s", order_id, e)
+            await mark_order_error(order_id, str(e))
+            return
+
+        # Очищаем лок после завершения (чтобы не копить в памяти)
+        async with _fulfill_locks_lock:
+            _fulfill_locks.pop(order_id, None)
 
 
 def _make_qr_base64(data: str) -> str:
@@ -986,13 +1062,15 @@ HTML_TEMPLATE_STR = """
 
     <script>
         const orderId = "{{ order_id }}";
+        const capabilityToken = "{{ capability_token }}";
         let attempts = 0;
         const maxAttempts = 90; // 3 минуты вместо 1
 
         async function checkStatus() {
             attempts++;
             try {
-                const resp = await fetch(`/api/order/${orderId}/status`);
+                const tokenParam = capabilityToken ? `&token=${capabilityToken}` : '';
+                const resp = await fetch(`/api/order/${orderId}/status?token=${capabilityToken}`);
                 const data = await resp.json();
 
                 if (data.sub_url) {

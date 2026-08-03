@@ -19,19 +19,21 @@ async def create_payment(
     amount: float,
     order_id: str,
     description: str,
+    capability_token: str = "",
 ) -> dict:
     """
     Создаёт платёжную ссылку.
 
     Returns: {"transaction_id": str, "payment_url": str, "status": str}
     """
+    token_param = f"&token={capability_token}" if capability_token else ""
     payload = {
         "paymentDetails": {
             "amount": round(float(amount), 2),
             "currency": "RUB",
         },
         "description": description[:255],
-        "return": f"{settings.site_base_url}/payment/success?order_id={order_id}",
+        "return": f"{settings.site_base_url}/payment/success?order_id={order_id}{token_param}",
         "failedUrl": f"{settings.site_base_url}/payment/failed?order_id={order_id}",
         # Поле "payload" не существует в Platega API — Platega молча игнорирует.
         # Для связи заказа с транзакцией используем поиск по transaction_id.
