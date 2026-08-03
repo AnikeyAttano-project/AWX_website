@@ -223,20 +223,13 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
     if not order.get("xui_email"):
         raise HTTPException(400, "Нет привязки к 3x-UI клиенту")
 
-    # Rate-limit: 1 продление в 24 часа на пользователя
-    renew_key = f"renew:{user['id']}"
-    if not check_rate_limit(renew_key, max_requests=1, window_minutes=1440):
-        logger.warning("Renew rate limit exceeded for user: %s", user["id"])
-        raise HTTPException(429, "Продление доступно не чаще 1 раза в сутки. Попробуйте позже.")
-
-    # Проверка: продление разрешено только если прошло ≥70% от срока подписки
+    # Сначала проверяем 70% срока (быстрый отказ, НЕConsuming rate-limit)
     if order.get("expires_at"):
         try:
             expires_at = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
             tariff = settings.tariffs.get(order["tariff"])
             total_days = tariff["days"] if tariff else 30
             now = datetime.utcnow()
-            # Дата создания заказа (или вычисляем из expires_at)
             order_created = expires_at - timedelta(days=total_days)
             elapsed = (now - order_created).total_seconds()
             required = total_days * 86400 * 0.7  # 70% от срока
@@ -249,6 +242,12 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
                 )
         except ValueError:
             pass  # Если дата некорректна — пропускаем проверку
+
+    # Rate-limit: 1 продление в 24 часа на пользователя (только после прохождения 70%)
+    renew_key = f"renew:{user['id']}"
+    if not check_rate_limit(renew_key, max_requests=1, window_minutes=1440):
+        logger.warning("Renew rate limit exceeded for user: %s", user["id"])
+        raise HTTPException(429, "Продление доступно не чаще 1 раза в сутки. Попробуйте позже.")
 
     tariff = settings.tariffs.get(order["tariff"])
     days = tariff["days"] if tariff else 30
@@ -885,9 +884,17 @@ async def platega_webhook(request: Request):
         return {"ok": False, "error": "order not found"}
 
     # Проверяем реальный статус через API (двойная проверка)
-    real_status = await check_status(tx_id)
+    try:
+        real_status = await check_status(tx_id)
+    except PlategaError as e:
+        logger.error("Webhook check_status failed for tx=%s: %s (falling back to polling)", tx_id, e)
+        # Не крашим webhook — polling на странице успеха подхватит
+        return {"ok": True, "msg": "check failed, polling fallback"}
+
     if real_status != "succeeded":
         logger.info("Payment not confirmed: tx=%s status=%s", tx_id, real_status)
+        if real_status in ("cancelled", "expired"):
+            await mark_order_error(order_id, f"Payment {real_status}")
         return {"ok": True, "msg": "not confirmed yet"}
 
     await fulfill_order(order["id"])
@@ -934,7 +941,7 @@ async def fulfill_order(order_id: str):
 
         tariff = settings.tariffs.get(order["tariff"])
         days = tariff["days"] if tariff else 30
-        devices = tariff["devices"] if tariff else 1
+        devices = tariff.get("devices", 1) if tariff else 1
 
         # Уникальный email на основе тарифа и номера заказа
         email = f"{order['tariff']}-{order_id}@vpn.local"
@@ -990,9 +997,8 @@ async def fulfill_order(order_id: str):
             await mark_order_error(order_id, str(e))
             return
 
-        # Очищаем лок после завершения (чтобы не копить в памяти)
-        async with _fulfill_locks_lock:
-            _fulfill_locks.pop(order_id, None)
+    # НЕ удаляем лок — он остаётся как защита от повторных вызовов
+    # Словарь _fulfill_locks растёт медленно (только для заказов с fulfill)
 
 
 def _make_qr_base64(data: str) -> str:
