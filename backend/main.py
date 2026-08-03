@@ -797,8 +797,12 @@ async def api_order_status(order_id: str, request: Request, token: str = ""):
         raise HTTPException(404, "Заказ не найден")
 
     # Проверка авторизации: capability-токен ИЛИ владелец заказа
+    # Авторизация: capability-токен ИЛИ владелец ИЛИ заказ без токена (backward compat)
     is_authorized = False
     if token and order.get("capability_token") and hmac.compare_digest(token, order["capability_token"]):
+        is_authorized = True
+    elif not order.get("capability_token"):
+        # Старый заказ без capability_token — разрешаем доступ (backward compatibility)
         is_authorized = True
 
     logger.info("Status check for order %s: status=%s, has_sub_url=%s, has_tx=%s",
@@ -1096,6 +1100,13 @@ HTML_TEMPLATE_STR = """
         let attempts = 0;
         const maxAttempts = 15; // 30 секунд — потом предлагаем ЛК
 
+        function showTimeoutHint() {
+            const s = document.getElementById("status");
+            const h = document.getElementById("timeout-hint");
+            if (s) s.classList.add("hidden");
+            if (h) h.classList.remove("hidden");
+        }
+
         async function checkStatus() {
             attempts++;
             try {
@@ -1108,6 +1119,9 @@ HTML_TEMPLATE_STR = """
                     document.getElementById("qr_code").src = "data:image/png;base64," + data.qr_base64;
                     document.getElementById("status").classList.add("hidden");
                     document.getElementById("result").classList.remove("hidden");
+                } else if (data.ready) {
+                    // Ключ есть, но нет авторизации — тоже предлагаем ЛК
+                    showTimeoutHint();
                 } else if (attempts < maxAttempts) {
                     // Ещё ждём — обновляем текст
                     const dots = '.'.repeat((attempts % 3) + 1);
@@ -1115,16 +1129,14 @@ HTML_TEMPLATE_STR = """
                     setTimeout(checkStatus, 2000);
                 } else {
                     // 30 секунд прошли — предлагаем ЛК
-                    document.getElementById("status").classList.add("hidden");
-                    document.getElementById("timeout-hint").classList.remove("hidden");
+                    showTimeoutHint();
                 }
             } catch (e) {
                 console.error(e);
                 if (attempts < maxAttempts) {
                     setTimeout(checkStatus, 2000);
                 } else {
-                    document.getElementById("status").classList.add("hidden");
-                    document.getElementById("timeout-hint").classList.remove("hidden");
+                    showTimeoutHint();
                 }
             }
         }
