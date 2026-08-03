@@ -597,6 +597,8 @@ async def load_runtime_settings():
                 settings.trial_days = int(value.get("days", settings.trial_days))
                 settings.trial_gb = int(value.get("gb", settings.trial_gb))
                 settings.trial_devices = int(value.get("devices", settings.trial_devices))
+            elif key == "demo_mode" and isinstance(value, dict):
+                settings.demo_mode = bool(value.get("enabled", False))
     except Exception:
         pass
 

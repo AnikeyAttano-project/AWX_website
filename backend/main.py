@@ -610,6 +610,11 @@ class CreateOrderRequest(BaseModel):
     tariff: str  # "quantum_month" | "quantum_quarter" | "quantum_halfyear" | "quantum_year"
 
 
+class DemoOrderRequest(BaseModel):
+    tariff: str = "quantum_month"
+    password: str  # Пароль для демо-оплаты
+
+
 # ————————————————— ЭНДПОИНТЫ API —————————————————
 
 @app.get("/api/tariffs")
@@ -673,7 +678,7 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
 
 
 @app.post("/api/order/demo")
-async def api_demo_order(req: CreateOrderRequest, request: Request, user: dict = Depends(get_optional_user)):
+async def api_demo_order(req: DemoOrderRequest, request: Request, user: dict = Depends(get_optional_user)):
     """
     ДЕМО-оплата — создает заказ и сразу выдаёт ключ без реальной оплаты.
     Используйте только для тестирования!
@@ -681,6 +686,10 @@ async def api_demo_order(req: CreateOrderRequest, request: Request, user: dict =
     """
     if not settings.demo_mode:
         raise HTTPException(404, "Демо-режим отключён")
+
+    # Проверка пароля демо-оплаты
+    if req.password != settings.demo_password:
+        raise HTTPException(403, "Неверный пароль демо-оплаты")
 
     # Rate-limit: 3 demo-заказа в час с одного IP (защита от абьюза)
     client_ip = get_real_ip(request)
