@@ -1477,9 +1477,9 @@ async function buyAddon() {
     });
 
     if (data.payment_url) {
+      // Баг3: после редиректа на оплату, polling будет через /api/account/addon/{id}/status
       window.location.href = data.payment_url;
     } else {
-      // Бесплатный — показали успех
       btn.textContent = '✅ Активировано';
       showToast('Доп. устройства подключены');
       setTimeout(() => { closeAddonModal(); loadSubscriptions(); }, 1500);

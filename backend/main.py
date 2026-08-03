@@ -297,17 +297,26 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
     tariff = settings.tariffs.get(order["tariff"])
     days = tariff["days"] if tariff else 30
 
-    # Обрабатываем cancel_pending add-ons ДО продления
-    addon = await get_active_addon_for_order(order_id)
-    if addon and addon["status"] == "cancel_pending":
-        # Уменьшаем лимит в 3x-UI
+    # Баг4: Обрабатываем cancel_pending add-ons ДО продления
+    # Считаем правильный лимит: base + все активные кроме отменяемого
+    pending_cancels = [a for a in await get_device_addons_for_order(order_id)
+                       if a["status"] == "cancel_pending"]
+    if pending_cancels:
         base_devices = tariff.get("devices", 5) if tariff else 5
+        # Суммируем все active + cancel_pending extras
+        all_addons = await get_device_addons_for_order(order_id)
+        total_with_cancel = sum(a["extra_devices"] for a in all_addons
+                               if a["status"] in ("active", "cancel_pending"))
+        # Вычитаем отменяемые
+        cancelled_extras = sum(a["extra_devices"] for a in pending_cancels)
+        new_limit = base_devices + total_with_cancel - cancelled_extras
         try:
-            await update_client_limit(order["xui_email"], base_devices)
+            await update_client_limit(order["xui_email"], max(base_devices, new_limit))
         except XuiError as e:
             logger.warning("Addon cancel during renew: failed to update limit: %s", e)
-        await finalize_addon_cancellation(addon["id"])
-        logger.info("Addon cancelled at renewal: id=%s order=%s", addon["id"], order_id)
+        for a in pending_cancels:
+            await finalize_addon_cancellation(a["id"])
+            logger.info("Addon cancelled at renewal: id=%s order=%s", a["id"], order_id)
 
     try:
         result = await renew_client(order["xui_email"], days)
@@ -636,9 +645,13 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
     if not addon_cfg:
         raise HTTPException(400, "Неизвестный тип add-on")
 
-    existing = await get_active_addon_for_order(order_id)
-    if existing and existing["addon_type"] == req.addon_type:
-        raise HTTPException(400, "Уже есть активный add-on этого типа")
+    # Баг5: проверяем НЕ только active/cancel_pending, но и pending (защита от двойного клика)
+    existing_addons = await get_device_addons_for_order(order_id)
+    pending_or_active = [a for a in existing_addons
+                         if a["addon_type"] == req.addon_type
+                         and a["status"] in ("active", "pending", "cancel_pending")]
+    if pending_or_active:
+        raise HTTPException(400, "Уже есть активный или ожидающий add-on этого типа")
 
     tariff = settings.tariffs.get(order["tariff"])
     now = datetime.utcnow()
@@ -677,10 +690,12 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
     except PlategaError as e:
         raise HTTPException(502, str(e))
 
+    # Баг1: НЕ вызываем save_platega_tx — addon_id не существует в orders,
+    # иначе webhook подхватит фантомный заказ и вызовет fulfill_order.
+    # tx_id хранится в device_addons.platega_tx_id (через create_device_addon).
     await create_device_addon(addon_id, user["id"], order_id, req.addon_type,
                               addon_cfg["extra_devices"], price_now,
                               order.get("expires_at", ""), payment["transaction_id"])
-    await save_platega_tx(addon_id, payment["transaction_id"])
 
     return {"ok": True, "addon_id": addon_id, "payment_url": payment["payment_url"], "amount": price_now}
 
@@ -711,6 +726,33 @@ async def list_addons(order_id: str, user: dict = Depends(get_optional_user)):
     addons = await get_device_addons_for_order(order_id)
     total_extra = await get_total_extra_devices(order_id)
     return {"addons": addons, "total_extra_devices": total_extra}
+
+
+@account_router.get("/addon/{addon_id}/status")
+async def addon_status(addon_id: str, user: dict = Depends(get_optional_user)):
+    """Polling-эндпоинт: проверка статуса add-on после оплаты (аналог /api/order/{id}/status)."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    addon = await get_addon_by_id(addon_id)
+    if not addon:
+        raise HTTPException(404, "Add-on не найден")
+    if addon["user_id"] != user["id"]:
+        raise HTTPException(403, "Доступ запрещён")
+
+    # Если pending — пробуем активировать (вдруг webhook опоздал)
+    if addon["status"] == "pending":
+        try:
+            await fulfill_addon(addon_id)
+            addon = await get_addon_by_id(addon_id)
+        except Exception as e:
+            logger.error("Addon polling fulfill error: %s", e)
+
+    return {
+        "addon_id": addon["id"],
+        "status": addon["status"],
+        "addon_type": addon["addon_type"],
+        "extra_devices": addon["extra_devices"],
+    }
 
 
 app.include_router(account_router)
@@ -1078,22 +1120,16 @@ async def platega_webhook(request: Request):
     if not tx_id:
         return {"ok": False, "error": "no transaction id"}
 
-    # Сначала проверяем: это оплата add-on?
+    # Баг2: Ищем add-on сначала по tx_id, потом по payload (fallback)
     addon = await get_addon_by_tx(tx_id)
+    if not addon and order_id:
+        addon_by_id = await get_addon_by_id(order_id)
+        if addon_by_id and addon_by_id.get("platega_tx_id") == tx_id:
+            addon = addon_by_id
+
     if addon and addon["status"] == "pending":
         if real_status == "succeeded":
-            await activate_addon(addon["id"])
-            # Обновляем лимит в 3x-UI
-            order = await get_order(addon["order_id"])
-            if order and order.get("xui_email"):
-                tariff = settings.tariffs.get(order["tariff"])
-                base_devices = tariff.get("devices", 5) if tariff else 5
-                extra = await get_total_extra_devices(addon["order_id"])
-                try:
-                    await update_client_limit(order["xui_email"], base_devices + extra)
-                except XuiError as e:
-                    logger.error("Addon activate: failed to update limit: %s", e)
-            logger.info("Addon activated: id=%s type=%s", addon["id"], addon["addon_type"])
+            await fulfill_addon(addon["id"])
             return {"ok": True}
         elif real_status in ("cancelled", "expired"):
             logger.info("Addon payment %s: %s", addon["id"], real_status)
@@ -1123,6 +1159,41 @@ async def platega_webhook(request: Request):
         return {"ok": True, "msg": "not confirmed yet"}
 
     await fulfill_order(order["id"])
+
+
+# ————————————————— FULFILL ADD-ON (с Lock) —————————————————
+
+_fulfill_addon_locks: dict[str, asyncio.Lock] = {}
+
+async def fulfill_addon(addon_id: str):
+    """Активация add-on после оплаты. Защищена Lock от параллельных вызовов."""
+    async with _fulfill_locks_lock:
+        lock_key = f"addon:{addon_id}"
+        if lock_key not in _fulfill_locks:
+            _fulfill_locks[lock_key] = asyncio.Lock()
+
+    async with _fulfill_locks[lock_key]:
+        addon = await get_addon_by_id(addon_id)
+        if not addon:
+            logger.warning("fulfill_addon: addon %s not found", addon_id)
+            return
+        if addon["status"] != "pending":
+            logger.info("fulfill_addon: addon %s already %s", addon_id, addon["status"])
+            return
+
+        await activate_addon(addon_id)
+
+        order = await get_order(addon["order_id"])
+        if order and order.get("xui_email"):
+            tariff = settings.tariffs.get(order["tariff"])
+            base_devices = tariff.get("devices", 5) if tariff else 5
+            extra = await get_total_extra_devices(addon["order_id"])
+            try:
+                await update_client_limit(order["xui_email"], base_devices + extra)
+                logger.info("Addon activated: id=%s type=%s limit=%d",
+                            addon_id, addon["addon_type"], base_devices + extra)
+            except XuiError as e:
+                logger.error("Addon activate: failed to update limit: %s", e)
 
     return {"ok": True}
 
