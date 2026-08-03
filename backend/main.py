@@ -30,10 +30,14 @@ from database import (
     get_referral_levels, get_user_referrer, get_active_subscription,
     add_referral_reward, get_setting, get_user_by_id,
     cleanup_expired_orders, cleanup_expired_trials, delete_order,
+    create_device_addon, get_device_addons_for_order, get_active_addon_for_order,
+    activate_addon, cancel_pending_addon, finalize_addon_cancellation,
+    get_addon_by_tx, get_addon_by_id, get_total_extra_devices,
 )
 from platega_client import create_payment, check_status, PlategaError
 from xui_client import (
     create_client, get_subscription_url, _parse_inbound_ids,
+    update_client_limit,
     get_sub_links, renew_client, check_client_status,
     delete_client, rekey_client,
     XuiError,
@@ -553,6 +557,148 @@ async def activate_trial(request: Request, user: dict = Depends(require_verified
         logger.error("Trial provisioning failed: %s", e)
         await mark_order_error(order_id, str(e))
         raise HTTPException(502, f"Ошибка создания пробного ключа: {e}")
+
+
+# ————————————————— DEVICE ADD-ONS (доп. устройства) —————————————————
+
+class AddonRequest(BaseModel):
+    addon_type: str  # "devices_5" | "devices_10"
+
+
+@account_router.get("/subscription/{order_id}/addon-price")
+async def get_addon_price(order_id: str, addon_type: str, user: dict = Depends(get_optional_user)):
+    """Расчёт proration: P = ceil(B * (1 - D) / T * R)"""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    if order.get("status") == "deleted":
+        raise HTTPException(400, "Подписка удалена")
+
+    addon_cfg = settings.device_addons.get(addon_type)
+    if not addon_cfg:
+        raise HTTPException(400, "Неизвестный тип add-on")
+    tariff = settings.tariffs.get(order["tariff"])
+    if not tariff:
+        raise HTTPException(400, "Неизвестный тариф")
+
+    now = datetime.utcnow()
+    remaining = 0
+    if order.get("expires_at"):
+        try:
+            expires_at = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
+            remaining = max(0, (expires_at - now).total_seconds() / 86400)
+        except ValueError:
+            pass
+
+    base_price = addon_cfg["base_price"]
+    discount = tariff.get("discount", 0) / 100
+    total_days = tariff["days"]
+    price_now = math.ceil(base_price * (1 - discount) / total_days * remaining) if total_days > 0 and remaining > 0 else 0
+    price_now = max(1, price_now) if remaining > 0 else 0
+
+    return {
+        "addon_type": addon_type, "extra_devices": addon_cfg["extra_devices"],
+        "title": addon_cfg["title"], "base_monthly": base_price,
+        "discount_pct": tariff.get("discount", 0),
+        "remaining_days": round(remaining, 1), "total_days": total_days, "price_now": price_now,
+    }
+
+
+@account_router.post("/subscription/{order_id}/addon")
+async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
+                         user: dict = Depends(get_optional_user)):
+    """Покупка add-on: платёж Platega на пропорциональную сумму."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    if order.get("status") in ("deleted", "pending"):
+        raise HTTPException(400, "Нельзя купить add-on для этой подписки")
+    if not order.get("xui_email"):
+        raise HTTPException(400, "Нет привязки к 3x-UI")
+
+    addon_cfg = settings.device_addons.get(req.addon_type)
+    if not addon_cfg:
+        raise HTTPException(400, "Неизвестный тип add-on")
+
+    existing = await get_active_addon_for_order(order_id)
+    if existing and existing["addon_type"] == req.addon_type:
+        raise HTTPException(400, "Уже есть активный add-on этого типа")
+
+    tariff = settings.tariffs.get(order["tariff"])
+    now = datetime.utcnow()
+    remaining = 0
+    if order.get("expires_at"):
+        try:
+            expires_at = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
+            remaining = max(0, (expires_at - now).total_seconds() / 86400)
+        except ValueError:
+            pass
+
+    base_price = addon_cfg["base_price"]
+    discount = tariff.get("discount", 0) / 100
+    total_days = tariff["days"]
+    price_now = math.ceil(base_price * (1 - discount) / total_days * remaining) if total_days > 0 and remaining > 0 else 0
+    price_now = max(1, price_now) if remaining > 0 else 0
+
+    addon_id = uuid.uuid4().hex[:12]
+
+    if price_now <= 0:
+        await create_device_addon(addon_id, user["id"], order_id, req.addon_type,
+                                  addon_cfg["extra_devices"], 0, order.get("expires_at", ""))
+        await activate_addon(addon_id)
+        base_devices = tariff.get("devices", 5)
+        extra = await get_total_extra_devices(order_id)
+        try:
+            await update_client_limit(order["xui_email"], base_devices + extra)
+        except XuiError as e:
+            logger.error("Failed to update limit: %s", e)
+        return {"ok": True, "addon_id": addon_id, "price_now": 0}
+
+    try:
+        payment = await create_payment(amount=price_now, order_id=addon_id,
+                                       description=f"Доп. устройства {addon_cfg['title']} ({round(remaining)} дн.)",
+                                       capability_token=uuid.uuid4().hex)
+    except PlategaError as e:
+        raise HTTPException(502, str(e))
+
+    await create_device_addon(addon_id, user["id"], order_id, req.addon_type,
+                              addon_cfg["extra_devices"], price_now,
+                              order.get("expires_at", ""), payment["transaction_id"])
+    await save_platega_tx(addon_id, payment["transaction_id"])
+
+    return {"ok": True, "addon_id": addon_id, "payment_url": payment["payment_url"], "amount": price_now}
+
+
+@account_router.post("/subscription/{order_id}/addon/cancel")
+async def cancel_addon(order_id: str, user: dict = Depends(get_optional_user)):
+    """Отмена add-on: cancel_pending, лимит уменьшится при следующем продлении."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    addon = await get_active_addon_for_order(order_id)
+    if not addon:
+        raise HTTPException(404, "Нет активного add-on")
+    await cancel_pending_addon(addon["id"])
+    return {"ok": True, "message": "Доп. устройства будут отменены при следующем продлении"}
+
+
+@account_router.get("/subscription/{order_id}/addons")
+async def list_addons(order_id: str, user: dict = Depends(get_optional_user)):
+    """Список add-on'ов для подписки."""
+    if not user:
+        raise HTTPException(401, "Требуется авторизация")
+    order = await get_user_order(user["id"], order_id)
+    if not order:
+        raise HTTPException(404, "Подписка не найдена")
+    addons = await get_device_addons_for_order(order_id)
+    total_extra = await get_total_extra_devices(order_id)
+    return {"addons": addons, "total_extra_devices": total_extra}
 
 
 app.include_router(account_router)
