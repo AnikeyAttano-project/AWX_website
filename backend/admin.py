@@ -584,6 +584,14 @@ async def update_demo(enabled: bool = Query(...)):
     return {"ok": True, "demo_mode": enabled}
 
 
+@admin_router.post("/cleanup")
+async def admin_cleanup():
+    """Ручной запуск очистки устаревших записей (>14 дней после окончания)."""
+    from main import cleanup_expired_subscriptions
+    await cleanup_expired_subscriptions()
+    return {"ok": True, "message": "Cleanup completed. Check server logs for details."}
+
+
 # -- Legacy endpoint (kept for backwards compat, now also persists) --
 
 @admin_router.post("/tariffs")

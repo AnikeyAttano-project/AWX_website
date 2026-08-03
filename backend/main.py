@@ -29,6 +29,7 @@ from database import (
     count_referrals, sum_reward_days, get_referral_list,
     get_referral_levels, get_user_referrer, get_active_subscription,
     add_referral_reward, get_setting, get_user_by_id,
+    cleanup_expired_orders, cleanup_expired_trials, delete_order,
 )
 from platega_client import create_payment, check_status, PlategaError
 from xui_client import (
@@ -101,12 +102,52 @@ def verify_platega_webhook(headers: dict) -> bool:
             secret == settings.platega_secret)
 
 
+async def cleanup_expired_subscriptions():
+    """Очистка устаревших подписок и триалов (>14 дней после окончания)."""
+    # 1. Удаляем устаревшие заказы
+    expired = await cleanup_expired_orders(grace_days=14)
+    deleted_count = 0
+    for order in expired:
+        # Удаляем клиента из 3x-UI (если есть)
+        if order.get("xui_email"):
+            try:
+                await delete_client(order["xui_email"])
+            except XuiError as e:
+                msg = str(e).lower()
+                if "not found" not in msg and "not exist" not in msg:
+                    logger.warning("Cleanup: failed to delete 3x-UI client for %s: %s", order["id"], e)
+        # Физически удаляем из БД
+        await delete_order(order["id"])
+        deleted_count += 1
+
+    # 2. Сбрасываем устаревшие триалы
+    trials_reset = await cleanup_expired_trials(grace_days=14)
+
+    if deleted_count or trials_reset:
+        logger.info("Cleanup: deleted %d orders, reset %d trials", deleted_count, trials_reset)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     await load_runtime_settings()
     logger.info("Database initialized, runtime settings loaded")
+
+    # Запускаем фоновую очистку устаревших записей (каждые 6 часов)
+    async def periodic_cleanup():
+        while True:
+            await asyncio.sleep(6 * 3600)  # 6 часов
+            try:
+                await cleanup_expired_subscriptions()
+            except Exception as e:
+                logger.error("Periodic cleanup error: %s", e)
+
+    cleanup_task = asyncio.create_task(periodic_cleanup())
+    logger.info("Periodic cleanup task started (every 6 hours)")
+
     yield
+
+    cleanup_task.cancel()
 
 
 app = FastAPI(title="VPN Shop", lifespan=lifespan)

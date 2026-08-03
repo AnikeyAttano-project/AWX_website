@@ -671,3 +671,37 @@ async def delete_order(order_id: str):
     async with aiosqlite.connect(settings.database_path) as db:
         await db.execute("DELETE FROM orders WHERE id = ?", (order_id,))
         await db.commit()
+
+
+async def cleanup_expired_orders(grace_days: int = 14) -> list[dict]:
+    """Find and delete orders expired more than grace_days ago. Returns list of {id, xui_email}."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT id, xui_email FROM orders "
+            "WHERE expires_at IS NOT NULL AND expires_at < datetime('now', ?) "
+            "AND status IN ('paid', 'error')",
+            (f'-{grace_days} days',)
+        )
+        rows = await cur.fetchall()
+        expired = [dict(row) for row in rows]
+
+        if expired:
+            ids = [r["id"] for r in expired]
+            placeholders = ",".join("?" * len(ids))
+            await db.execute(f"DELETE FROM orders WHERE id IN ({placeholders})", ids)
+            await db.commit()
+
+        return expired
+
+
+async def cleanup_expired_trials(grace_days: int = 14) -> int:
+    """Reset trial fields for users whose trial expired more than grace_days ago. Returns count."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        cur = await db.execute(
+            "UPDATE users SET trial_started_at = NULL, trial_expires_at = NULL "
+            "WHERE trial_expires_at IS NOT NULL AND trial_expires_at < datetime('now', ?)",
+            (f'-{grace_days} days',)
+        )
+        await db.commit()
+        return cur.rowcount
