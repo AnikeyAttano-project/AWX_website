@@ -297,6 +297,18 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
     tariff = settings.tariffs.get(order["tariff"])
     days = tariff["days"] if tariff else 30
 
+    # Обрабатываем cancel_pending add-ons ДО продления
+    addon = await get_active_addon_for_order(order_id)
+    if addon and addon["status"] == "cancel_pending":
+        # Уменьшаем лимит в 3x-UI
+        base_devices = tariff.get("devices", 5) if tariff else 5
+        try:
+            await update_client_limit(order["xui_email"], base_devices)
+        except XuiError as e:
+            logger.warning("Addon cancel during renew: failed to update limit: %s", e)
+        await finalize_addon_cancellation(addon["id"])
+        logger.info("Addon cancelled at renewal: id=%s order=%s", addon["id"], order_id)
+
     try:
         result = await renew_client(order["xui_email"], days)
         # Обновляем expires_at в БД
@@ -1065,6 +1077,28 @@ async def platega_webhook(request: Request):
 
     if not tx_id:
         return {"ok": False, "error": "no transaction id"}
+
+    # Сначала проверяем: это оплата add-on?
+    addon = await get_addon_by_tx(tx_id)
+    if addon and addon["status"] == "pending":
+        if real_status == "succeeded":
+            await activate_addon(addon["id"])
+            # Обновляем лимит в 3x-UI
+            order = await get_order(addon["order_id"])
+            if order and order.get("xui_email"):
+                tariff = settings.tariffs.get(order["tariff"])
+                base_devices = tariff.get("devices", 5) if tariff else 5
+                extra = await get_total_extra_devices(addon["order_id"])
+                try:
+                    await update_client_limit(order["xui_email"], base_devices + extra)
+                except XuiError as e:
+                    logger.error("Addon activate: failed to update limit: %s", e)
+            logger.info("Addon activated: id=%s type=%s", addon["id"], addon["addon_type"])
+            return {"ok": True}
+        elif real_status in ("cancelled", "expired"):
+            logger.info("Addon payment %s: %s", addon["id"], real_status)
+            return {"ok": True}
+        return {"ok": True, "msg": "not confirmed yet"}
 
     # Находим заказ — либо по payload (order_id), либо по tx_id
     order = await get_order(order_id) if order_id else None

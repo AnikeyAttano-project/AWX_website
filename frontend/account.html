@@ -472,6 +472,55 @@
   </div>
 </div>
 
+<!-- Модалка покупки дополнительных устройств -->
+<div id="addon-modal" class="modal-overlay" onclick="if(event.target===this)closeAddonModal()">
+  <div class="modal">
+    <button class="modal-close" onclick="closeAddonModal()">×</button>
+    <div class="key-head">
+      <h4 class="key-title">Дополнительные устройства</h4>
+      <p class="key-sub" id="addon-sub-info">Загрузка...</p>
+    </div>
+    <div id="addon-options" style="margin-bottom:16px;">
+      <label class="addon-option" id="addon-opt-5">
+        <input type="radio" name="addon_type" value="devices_5" checked onchange="updateAddonPrice()">
+        <div>
+          <div style="font-weight:600;">+5 устройств</div>
+          <div style="font-size:13px;color:var(--text-3);">100 ₽/мес</div>
+        </div>
+      </label>
+      <label class="addon-option" id="addon-opt-10">
+        <input type="radio" name="addon_type" value="devices_10" onchange="updateAddonPrice()">
+        <div>
+          <div style="font-weight:600;">+10 устройств</div>
+          <div style="font-size:13px;color:var(--text-3);">170 ₽/мес</div>
+        </div>
+      </label>
+    </div>
+    <div id="addon-price-info" style="background:var(--bg,#f5f5f5);border-radius:10px;padding:14px;margin-bottom:16px;display:none;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:13px;color:var(--text-2);">К оплате сейчас:</span>
+        <span id="addon-price" style="font-weight:700;font-size:18px;color:var(--accent);">—</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-3);" id="addon-proration-text"></div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:4px;" id="addon-next-payment-text"></div>
+    </div>
+    <div id="addon-cancel-section" style="display:none;margin-bottom:16px;">
+      <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:10px;padding:12px;margin-bottom:8px;">
+        <p style="font-size:13px;color:#92400e;">У вас уже есть активный дополнительный пакет.</p>
+      </div>
+      <button onclick="cancelAddon()" class="btn btn-outline btn-block" style="color:var(--danger,#dc2626);border-color:var(--danger,#dc2626);">Отказаться от доп. устройств</button>
+    </div>
+    <div id="addon-error" class="form-error hidden"></div>
+    <button id="addon-buy-btn" onclick="buyAddon()" class="btn btn-dark btn-block">Оплатить</button>
+  </div>
+</div>
+
+<style>
+  .addon-option{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid var(--border,#e5e5e5);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:border-color .15s;}
+  .addon-option:has(input:checked){border-color:var(--accent,#1F5F52);background:var(--accent-bg,#EAF1EE);}
+  .addon-option input[type="radio"]{accent-color:var(--accent,#1F5F52);width:18px;height:18px;}
+</style>
+
 <script>
 const API_BASE = 'http://localhost:8000'; // Измените на ваш домен
 const TOKEN_KEY = 'awx_token';
@@ -480,6 +529,7 @@ const ICONS = {
   key: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/></svg>',
   renew: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   edit: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  device: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="5" y="2" width="14" height="20" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M12 18h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   chart: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 3v18h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 15l4-5 3 3 5-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   trash: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   box: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M3 8l9 5 9-5M12 13v8" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
@@ -886,6 +936,7 @@ function renderSubscriptions(subs) {
           <button data-action="rekey" data-id="${escapeHtml(sub.id)}" class="btn btn-outline" title="Перевыпустить ключ">${ICONS.renew}Перевыпустить</button>
           <button data-action="rename" data-id="${escapeHtml(sub.id)}" data-current-name="${escapeHtml(displayName)}" class="btn btn-outline" title="Переименовать подписку">${ICONS.edit}Переименовать</button>
           <button data-action="stats" data-id="${escapeHtml(sub.id)}" class="btn btn-outline" title="Статистика">${ICONS.chart}Статистика</button>
+          <button data-action="addon" data-id="${escapeHtml(sub.id)}" class="btn btn-outline" title="Увеличить количество устройств">${ICONS.device}Устройства</button>
           <button data-action="delete" data-id="${escapeHtml(sub.id)}" class="btn btn-outline btn-danger" title="Удалить подписку">${ICONS.trash}Удалить</button>` : ''}
         </div>` : ''}
       </div>
@@ -1354,6 +1405,106 @@ async function copyReferralLink() {
   showToast('Ссылка скопирована');
 }
 
+// ————————————————— ДОП. УСТРОЙСТВА (ADD-ON) —————————————————
+
+let addonOrderId = null;
+
+function openAddonModal(orderId) {
+  addonOrderId = orderId;
+  document.getElementById('addon-modal').classList.add('active');
+  document.getElementById('addon-error').classList.add('hidden');
+  document.getElementById('addon-price-info').style.display = 'none';
+  document.getElementById('addon-cancel-section').style.display = 'none';
+  document.getElementById('addon-buy-btn').style.display = '';
+  document.getElementById('addon-options').style.display = '';
+  document.getElementById('addon-sub-info').textContent = 'Загрузка...';
+  // Проверяем активные add-on'ы
+  apiFetch(`/api/account/subscription/${orderId}/addons`).then(data => {
+    const active = (data.addons || []).find(a => a.status === 'active');
+    const totalExtra = data.total_extra_devices || 0;
+    document.getElementById('addon-sub-info').textContent = `Текущий лимит: ${5 + totalExtra} устройств`;
+    if (active) {
+      document.getElementById('addon-cancel-section').style.display = '';
+      document.getElementById('addon-sub-info').textContent += ` (доп. ${active.extra_devices} уже подключены)`;
+    }
+    updateAddonPrice();
+  }).catch(() => {
+    document.getElementById('addon-sub-info').textContent = '';
+    updateAddonPrice();
+  });
+}
+
+function closeAddonModal() {
+  document.getElementById('addon-modal').classList.remove('active');
+  addonOrderId = null;
+}
+
+async function updateAddonPrice() {
+  if (!addonOrderId) return;
+  const addonType = document.querySelector('input[name="addon_type"]:checked')?.value;
+  if (!addonType) return;
+
+  try {
+    const data = await apiFetch(`/api/account/subscription/${addonOrderId}/addon-price?addon_type=${addonType}`);
+    const priceInfo = document.getElementById('addon-price-info');
+    priceInfo.style.display = '';
+    document.getElementById('addon-price').textContent = `${data.price_now} ₽`;
+    document.getElementById('addon-proration-text').textContent =
+      `Оплата за ${Math.round(data.remaining_days)} оставшихся дней из ${data.total_days} дней периода`;
+    const monthlyTotal = data.base_monthly + (data.discount_pct ? ` (${data.discount_pct}% скидка)` : '');
+    document.getElementById('addon-next-payment-text').textContent =
+      `При следующем продлении: ${data.base_monthly} ₽/мес`;
+    document.getElementById('addon-buy-btn').textContent = data.price_now > 0 ? `Оплатить ${data.price_now} ₽` : 'Активировать бесплатно';
+  } catch (e) {
+    document.getElementById('addon-price-info').style.display = 'none';
+  }
+}
+
+async function buyAddon() {
+  if (!addonOrderId) return;
+  const addonType = document.querySelector('input[name="addon_type"]:checked')?.value;
+  if (!addonType) return;
+
+  const btn = document.getElementById('addon-buy-btn');
+  btn.disabled = true;
+  btn.textContent = 'Создание заказа...';
+  document.getElementById('addon-error').classList.add('hidden');
+
+  try {
+    const data = await apiFetch(`/api/account/subscription/${addonOrderId}/addon`, {
+      method: 'POST',
+      body: JSON.stringify({ addon_type: addonType })
+    });
+
+    if (data.payment_url) {
+      window.location.href = data.payment_url;
+    } else {
+      // Бесплатный — показали успех
+      btn.textContent = '✅ Активировано';
+      showToast('Доп. устройства подключены');
+      setTimeout(() => { closeAddonModal(); loadSubscriptions(); }, 1500);
+    }
+  } catch (e) {
+    const err = document.getElementById('addon-error');
+    err.textContent = e.message || 'Ошибка';
+    err.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Оплатить';
+  }
+}
+
+async function cancelAddon() {
+  if (!addonOrderId || !confirm('Отменить доп. устройства? Лимит уменьшится в день продления подписки.')) return;
+  try {
+    await apiFetch(`/api/account/subscription/${addonOrderId}/addon/cancel`, { method: 'POST' });
+    showToast('Доп. устройства будут отменены при следующем продлении');
+    closeAddonModal();
+    loadSubscriptions();
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+}
+
 // ————————————————— СОБЫТИЯ —————————————————
 
 // Делегирование кликов по кнопкам в карточках подписок и триале
@@ -1367,6 +1518,7 @@ document.addEventListener('click', (e) => {
   else if (action === 'rekey') rekeySubscription(id, btn);
   else if (action === 'rename') openRenameModal(id, btn.dataset.currentName || '');
   else if (action === 'stats') showStats(id);
+  else if (action === 'addon') openAddonModal(id);
   else if (action === 'delete') deleteSubscription(id, btn);
 });
 
@@ -1376,6 +1528,7 @@ document.addEventListener('keydown', (e) => {
     closeKeyModal();
     closeStatsModal();
     closeRenameModal();
+    closeAddonModal();
   }
 });
 
