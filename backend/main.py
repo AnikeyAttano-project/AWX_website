@@ -604,6 +604,7 @@ HTML_TEMPLATE_STR = """
         <p class="text-gray-700 mb-6">Ваш ключ готовится...</p>
 
         <div id="status" class="mb-6">
+            <p class="text-gray-500 text-sm mb-2">Номер заказа: <strong>{{ order_id }}</strong></p>
             <div class="animate-pulse flex space-x-4">
                 <div class="flex-1 space-y-4 py-1">
                     <div class="h-4 bg-gray-300 rounded w-3/4"></div>
@@ -642,7 +643,7 @@ HTML_TEMPLATE_STR = """
     <script>
         const orderId = "{{ order_id }}";
         let attempts = 0;
-        const maxAttempts = 30;
+        const maxAttempts = 90; // 3 минуты вместо 1
 
         async function checkStatus() {
             attempts++;
@@ -658,8 +659,12 @@ HTML_TEMPLATE_STR = """
                 } else if (attempts < maxAttempts) {
                     setTimeout(checkStatus, 2000);
                 } else {
-                    document.getElementById("status").innerHTML =
-                        '<p class="text-red-600">⏱ Ключ задерживается. Попробуйте обновить страницу через минуту.</p>';
+                    document.getElementById("status").innerHTML = `
+                        <p class="text-red-600 mb-4">⏱ Ключ задерживается. Попробуйте обновить статус.</p>
+                        <p class="text-gray-500 text-sm mb-4">Ваш номер заказа: <strong>${orderId}</strong></p>
+                        <button onclick="checkStatus(); attempts = 0;" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">🔄 Обновить статус</button>
+                        <a href="/account.html" class="ml-2 bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 inline-block">Личный кабинет</a>
+                    `;
                 }
             } catch (e) {
                 console.error(e);

@@ -67,6 +67,9 @@ class Settings(BaseSettings):
         v = str(v or "").strip().rstrip("/")
         if not v:
             raise ValueError("xui_sub_base_url must not be empty")
+        # Ensure https:// prefix
+        if not v.startswith("http"):
+            raise ValueError("xui_sub_base_url must start with http:// or https://")
         return v
 
     class Config:

@@ -112,8 +112,10 @@ async def get_subscription_url(sub_id: str) -> str:
     """
     Возвращает полный URL подписки.
     Строится из настроек панели, НЕ из API.
+    Гарантирует '/' между базовым URL и sub_id.
     """
-    return f"{settings.xui_sub_base_url}{sub_id}"
+    base = settings.xui_sub_base_url.rstrip("/")
+    return f"{base}/{sub_id}"
 
 
 async def get_share_links(sub_id: str) -> list[str]:
