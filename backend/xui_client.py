@@ -161,6 +161,41 @@ async def get_sub_links(sub_id: str) -> dict:
     return {"sub_url": sub_url, "links": links}
 
 
+async def update_client_limit(email: str, new_limit_ip: int) -> dict:
+    """Обновляет limit_ip клиента в 3x-UI."""
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
+        resp = await client.get(
+            f"{settings.xui_base_url}/panel/api/clients/get/{email}",
+            headers=_headers(),
+        )
+
+    if resp.status_code != 200:
+        raise XuiError(f"Cannot find client {email}: HTTP {resp.status_code}")
+
+    data = resp.json()
+    if not data.get("success"):
+        raise XuiError(f"Cannot find client {email}")
+
+    current = data["obj"]["client"]
+    current.pop("id", None)
+    current["limitIp"] = new_limit_ip
+
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
+        resp = await client.post(
+            f"{settings.xui_base_url}/panel/api/clients/update/{email}",
+            json=current, headers=_headers(),
+        )
+
+    if resp.status_code != 200:
+        raise XuiError(f"3x-UI update limit error: HTTP {resp.status_code}")
+
+    data = resp.json()
+    if not data.get("success"):
+        raise XuiError(f"3x-UI update limit error: {data.get('msg')}")
+
+    return {"email": email, "new_limit_ip": new_limit_ip}
+
+
 async def renew_client(email: str, add_days: int) -> dict:
     """
     Продлевает подписку. POST /update/{email} требует ПОЛНУЮ модель клиента,

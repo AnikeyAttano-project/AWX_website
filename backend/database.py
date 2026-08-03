@@ -73,6 +73,36 @@ CREATE TABLE IF NOT EXISTS referral_settings (
     key             TEXT PRIMARY KEY,
     value           TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS device_addons (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    order_id        TEXT NOT NULL,
+    addon_type      TEXT NOT NULL,
+    extra_devices   INTEGER NOT NULL,
+    amount_paid     REAL NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_at      TEXT DEFAULT (datetime('now')),
+    expires_at      TEXT,
+    platega_tx_id   TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+);
+
+CREATE TABLE IF NOT EXISTS device_addons (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    order_id        TEXT NOT NULL,
+    addon_type      TEXT NOT NULL,
+    extra_devices   INTEGER NOT NULL,
+    amount_paid     REAL NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_at      TEXT DEFAULT (datetime('now')),
+    expires_at      TEXT,
+    platega_tx_id   TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+);
 """
 
 
@@ -705,3 +735,100 @@ async def cleanup_expired_trials(grace_days: int = 14) -> int:
         )
         await db.commit()
         return cur.rowcount
+
+
+# ————————————————— DEVICE ADD-ONS —————————————————
+
+async def create_device_addon(addon_id: str, user_id: str, order_id: str,
+                               addon_type: str, extra_devices: int, amount_paid: float,
+                               expires_at: str, platega_tx_id: str = ""):
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute(
+            "INSERT INTO device_addons (id, user_id, order_id, addon_type, extra_devices, "
+            "amount_paid, status, expires_at, platega_tx_id) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (addon_id, user_id, order_id, addon_type, extra_devices, amount_paid, expires_at, platega_tx_id),
+        )
+        await db.commit()
+
+
+async def get_device_addons_for_order(order_id: str) -> list[dict]:
+    """Get all add-ons for a specific subscription order."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM device_addons WHERE order_id = ? ORDER BY created_at DESC",
+            (order_id,),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_active_addon_for_order(order_id: str) -> dict | None:
+    """Get the active (or cancel_pending) add-on for a subscription."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM device_addons WHERE order_id = ? AND status IN ('active', 'cancel_pending') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (order_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def activate_addon(addon_id: str):
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute(
+            "UPDATE device_addons SET status = 'active' WHERE id = ?", (addon_id,)
+        )
+        await db.commit()
+
+
+async def cancel_pending_addon(addon_id: str):
+    """Mark add-on as cancel_pending — will be removed at next renewal."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute(
+            "UPDATE device_addons SET status = 'cancel_pending' WHERE id = ? AND status = 'active'",
+            (addon_id,),
+        )
+        await db.commit()
+
+
+async def finalize_addon_cancellation(addon_id: str):
+    """Actually cancel and remove add-on (called during renewal)."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute(
+            "UPDATE device_addons SET status = 'cancelled' WHERE id = ?", (addon_id,)
+        )
+        await db.commit()
+
+
+async def get_addon_by_tx(tx_id: str) -> dict | None:
+    async with aiosqlite.connect(settings.database_path) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM device_addons WHERE platega_tx_id = ?", (tx_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_addon_by_id(addon_id: str) -> dict | None:
+    async with aiosqlite.connect(settings.database_path) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM device_addons WHERE id = ?", (addon_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_total_extra_devices(order_id: str) -> int:
+    """Sum of active extra devices for a subscription."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(extra_devices), 0) FROM device_addons "
+            "WHERE order_id = ? AND status = 'active'",
+            (order_id,),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0

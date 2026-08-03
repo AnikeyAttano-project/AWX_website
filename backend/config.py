@@ -60,6 +60,12 @@ class Settings(BaseSettings):
         "quantum_year": {"days": 365, "price": 2900, "title": "Quantum 12 Месяцев", "devices": 5, "discount": 20},
     }
 
+    # Add-on пакеты: покупка доп. устройств с пропорциональной оплатой (proration)
+    device_addons: dict = {
+        "devices_5":  {"extra_devices": 5,  "base_price": 100, "title": "+5 устройств"},
+        "devices_10": {"extra_devices": 10, "base_price": 170, "title": "+10 устройств"},
+    }
+
     @field_validator("xui_inbound_ids")
     @classmethod
     def validate_inbound_ids(cls, v):
