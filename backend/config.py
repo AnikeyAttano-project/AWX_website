@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     demo_mode: bool = False
     demo_password: str = "AxZz123@Tt"  # Пароль для демо-оплаты (только для тестирования)
 
+    # Дебаг-песочница биллинга — включает /admin/debug/* эндпоинты.
+    # По умолчанию ВЫКЛЮЧЕНА. Никогда не включай на проде с реальными платежами —
+    # инструменты умеют мутировать реальные лимиты в 3x-UI и обходить оплату по дизайну.
+    debug_sandbox_enabled: bool = False
+
     # Тарифы: slug → (дней, цена в RUB, название, кол-во устройств, скидка %)
     tariffs: dict = {
         "quantum_month": {"days": 31, "price": 300, "title": "Quantum Месяц", "devices": 5, "discount": 0},

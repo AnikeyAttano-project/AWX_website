@@ -35,6 +35,7 @@ from database import (
     get_addon_by_tx, get_addon_by_id, get_total_extra_devices,
 )
 from platega_client import create_payment, check_status, PlategaError
+from pricing import compute_addon_proration
 from xui_client import (
     create_client, get_subscription_url, _parse_inbound_ids,
     update_client_limit,
@@ -294,6 +295,18 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
         logger.warning("Renew rate limit exceeded for user: %s", user["id"])
         raise HTTPException(429, "Продление доступно не чаще 1 раза в сутки. Попробуйте позже.")
 
+    return await _renew_subscription_core(order_id, order)
+
+
+async def _renew_subscription_core(order_id: str, order: dict) -> dict:
+    """
+    Внутренняя логика продления подписки (БЕЗ проверок доступа/70%/rate-limit).
+
+    Выделена из renew_subscription, чтобы и HTTP-эндпоинт, и дебаг-симулятор
+    /admin/debug/billing/simulate-renew звали одну и ту же логику (не дублировать).
+    Проверки, которые должны быть только у пользовательского пути, остаются в
+    renew_subscription; сюда они намеренно НЕ попадают.
+    """
     tariff = settings.tariffs.get(order["tariff"])
     days = tariff["days"] if tariff else 30
 
@@ -330,7 +343,8 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
                 (new_expires, order_id),
             )
             await db.commit()
-        logger.info("Subscription renewed: order=%s user=%s days=%d", order_id, user["id"], days)
+        logger.info("Subscription renewed: order=%s user=%s days=%d",
+                    order_id, order.get("user_id"), days)
         return {"ok": True, "new_expires_at": new_expires}
     except XuiError as e:
         logger.error("Renew failed for order %s: %s", order_id, e)
@@ -614,10 +628,10 @@ async def get_addon_price(order_id: str, addon_type: str, user: dict = Depends(g
             pass
 
     base_price = addon_cfg["base_price"]
-    discount = tariff.get("discount", 0) / 100
     total_days = tariff["days"]
-    price_now = math.ceil(base_price * (1 - discount) / total_days * remaining) if total_days > 0 and remaining > 0 else 0
-    price_now = max(1, price_now) if remaining > 0 else 0
+    price_now = compute_addon_proration(
+        base_price, tariff.get("discount", 0), total_days, remaining
+    )["price_now"]
 
     return {
         "addon_type": addon_type, "extra_devices": addon_cfg["extra_devices"],
@@ -664,10 +678,10 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
             pass
 
     base_price = addon_cfg["base_price"]
-    discount = tariff.get("discount", 0) / 100
     total_days = tariff["days"]
-    price_now = math.ceil(base_price * (1 - discount) / total_days * remaining) if total_days > 0 and remaining > 0 else 0
-    price_now = max(1, price_now) if remaining > 0 else 0
+    price_now = compute_addon_proration(
+        base_price, tariff.get("discount", 0), total_days, remaining
+    )["price_now"]
 
     addon_id = uuid.uuid4().hex[:12]
 
