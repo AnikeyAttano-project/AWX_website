@@ -161,6 +161,25 @@ async def get_sub_links(sub_id: str) -> dict:
     return {"sub_url": sub_url, "links": links}
 
 
+async def get_client_info(email: str) -> dict:
+    """Read-only: возвращает текущие данные клиента из 3x-UI (без мутаций).
+
+    Используется дебаг-песочницей для Force Sync Preview и инспекции
+    реального limitIp в 3x-UI относительно ожидаемого в БД.
+    """
+    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
+        resp = await client.get(
+            f"{settings.xui_base_url}/panel/api/clients/get/{email}",
+            headers=_headers(),
+        )
+    if resp.status_code != 200:
+        raise XuiError(f"Cannot find client {email}: HTTP {resp.status_code}")
+    data = resp.json()
+    if not data.get("success"):
+        raise XuiError(f"Cannot find client {email}")
+    return data["obj"]["client"]  # содержит limitIp, expiryTime, enable, total и т.д.
+
+
 async def update_client_limit(email: str, new_limit_ip: int) -> dict:
     """Обновляет limit_ip клиента в 3x-UI."""
     async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:

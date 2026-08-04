@@ -1,3 +1,4 @@
+import json
 import random
 import aiosqlite
 from config import settings
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash   TEXT NOT NULL,
     telegram_id     TEXT,
     verified        INTEGER NOT NULL DEFAULT 1,
+    is_test_account INTEGER NOT NULL DEFAULT 0,
     trial_started_at TEXT,
     trial_expires_at TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
@@ -87,6 +89,15 @@ CREATE TABLE IF NOT EXISTS device_addons (
     platega_tx_id   TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (order_id) REFERENCES orders(id)
+);
+
+CREATE TABLE IF NOT EXISTS debug_audit_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_name      TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    target_user_id  TEXT,
+    details_json    TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -151,6 +162,11 @@ async def init_db():
             await db.execute("ALTER TABLE users ADD COLUMN referred_by TEXT")
         except Exception:
             pass
+        # Миграция: users — дебаг-песочница
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN is_test_account INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
         # Индексы для частых запросов
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_orders_tx ON orders(platega_tx_id)"
@@ -177,6 +193,10 @@ async def init_db():
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)"
+        )
+        # Индексы для дебаг-аудита
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_debug_audit_user ON debug_audit_log(target_user_id)"
         )
         # Настройки реферальной программы по умолчанию
         await db.execute(
@@ -817,3 +837,37 @@ async def get_total_extra_devices(order_id: str) -> int:
         )
         row = await cur.fetchone()
         return row[0] if row else 0
+
+
+# ————————————————— Debug Sandbox —————————————————
+
+async def set_test_account(user_id: str, is_test: bool):
+    """Помечает/снимает флаг тестового аккаунта (is_test_account)."""
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute(
+            "UPDATE users SET is_test_account = ? WHERE id = ?",
+            (1 if is_test else 0, user_id),
+        )
+        await db.commit()
+
+
+async def log_debug_action(
+    admin_name: str,
+    action: str,
+    target_user_id: str | None,
+    details: dict,
+):
+    """Пишет строку в debug_audit_log после успешного разрушительного действия.
+
+    admin_name — значение заголовка X-Admin-Name (не настоящая аутентификация по
+    ролям, а указание «кто отвечает за это действие» при единственном общем ключе).
+    Если в будущем появятся несколько реальных людей с раздельным доступом —
+    это место нужно будет заменить на настоящие именные учётки.
+    """
+    async with aiosqlite.connect(settings.database_path) as db:
+        await db.execute(
+            "INSERT INTO debug_audit_log (admin_name, action, target_user_id, details_json) "
+            "VALUES (?, ?, ?, ?)",
+            (admin_name, action, target_user_id, json.dumps(details, ensure_ascii=False)),
+        )
+        await db.commit()

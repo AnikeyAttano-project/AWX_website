@@ -44,6 +44,7 @@ from xui_client import (
     XuiError,
 )
 from admin import admin_router
+from admin_debug import admin_debug_router
 from auth import auth_router, get_optional_user, require_verified_email, get_current_user
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -194,6 +195,7 @@ async def add_security_headers(request: Request, call_next):
 # ————————————————— АДМИН ПАНЕЛЬ —————————————————
 # Маршруты /admin/* — защищены заголовком X-Admin-Key (см. admin.py)
 app.include_router(admin_router)
+app.include_router(admin_debug_router)
 
 # ————————————————— АВТОРИЗАЦИЯ —————————————————
 # Маршруты /api/auth/* — register, login, me

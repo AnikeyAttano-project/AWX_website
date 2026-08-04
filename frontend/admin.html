@@ -199,6 +199,10 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="1.6"/></svg>
         Настройки
       </button>
+      <button data-view="debug">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 2v2M16 2v2M9 13l2-2-2-2M15 13l-2-2 2-2M12 15l-2 2 2 2 2-2-2-2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>
+        Дебаг
+      </button>
     </nav>
     <div class="sidebar-bottom">
       <button onclick="doLogout()" class="btn btn-ghost btn-block" style="justify-content:flex-start;gap:8px;">
@@ -285,6 +289,100 @@
     <div id="view-settings" class="view hidden">
       <div class="section-head"><h1>Настройки</h1></div>
       <div id="settings-content"></div>
+    </div>
+
+    <!-- ====== DEBUG ====== -->
+    <div id="view-debug" class="view hidden">
+      <div class="section-head"><h1>Дебаг-песочница биллинга</h1></div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="field" style="max-width:360px;margin:0;">
+          <label>X-Admin-Name <small style="color:var(--text-3);">— кто выполняет действия (пишется в audit-лог)</small></label>
+          <input type="text" id="dbg-admin-name" placeholder="Например: Иван" onchange="saveDebugAdminName()">
+        </div>
+        <p style="font-size:12px;color:var(--text-3);margin-top:8px;">Без заполненного имени все разрушающие действия вернут 400. Имя сохраняется в localStorage.</p>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="margin-bottom:12px;">1. Состояние пользователя / заказа</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <div class="field" style="min-width:180px;margin:0;"><label>User ID</label><input type="text" id="dbg-user-id" placeholder="user_id"></div>
+          <div class="field" style="min-width:180px;margin:0;"><label>Order ID</label><input type="text" id="dbg-order-id" placeholder="order_id"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          <button class="btn btn-dark btn-sm" onclick="debugInspect()">Проверить состояние</button>
+          <button class="btn btn-outline btn-sm" onclick="debugForceGrant()">Force-grant add-on</button>
+          <button class="btn btn-outline btn-sm" onclick="debugCancelPending()">Force cancel-pending</button>
+          <button class="btn btn-outline btn-sm" onclick="debugFinalizeCancel()">Force finalize cancel</button>
+          <button class="btn btn-outline btn-sm" onclick="debugResetAll()" style="color:var(--danger,#D03B3B);border-color:var(--danger,#D03B3B);">Reset all add-ons</button>
+        </div>
+        <div id="dbg-inspect" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="margin-bottom:12px;">2. Симулятор оплаты / вебхуков</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <div class="field" style="min-width:160px;margin:0;"><label>User ID</label><input type="text" id="dbg-pay-user" placeholder="user_id"></div>
+          <div class="field" style="min-width:160px;margin:0;"><label>Тип покупки</label>
+            <select id="dbg-pay-type">
+              <option value="subscription">Подписка</option>
+              <option value="devices_5">+5 устройств</option>
+              <option value="devices_10">+10 устройств</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:170px;margin:0;"><label>Тариф (для подписки)</label>
+            <select id="dbg-pay-tariff"><option value="">—</option></select>
+          </div>
+          <div class="field" style="min-width:160px;margin:0;"><label>Order ID (add-on / fail)</label><input type="text" id="dbg-pay-order" placeholder="order_id"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          <button class="btn btn-dark btn-sm" onclick="debugMock('success')">Mock success</button>
+          <button class="btn btn-outline btn-sm" onclick="debugMock('fail')">Mock fail</button>
+          <button class="btn btn-outline btn-sm" onclick="debugMock('pending')">Mock pending</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-3);margin-top:8px;">Mock success — реальный провижининг в 3x-UI, но без единого похода в Platega.</p>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="margin-bottom:12px;">3. Автопродление и Force Sync</h3>
+        <div class="field" style="max-width:240px;margin:0;"><label>Order ID</label><input type="text" id="dbg-renew-order" placeholder="order_id"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          <button class="btn btn-dark btn-sm" onclick="debugSimulateRenew()">Simulate renew</button>
+          <button class="btn btn-outline btn-sm" onclick="debugForceSyncPreview()">Force Sync (preview)</button>
+          <button class="btn btn-outline btn-sm" onclick="debugForceSyncApply()">Force Sync (apply)</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-3);margin-top:8px;">Force Sync строго двухшаговый: сначала preview (read-only), затем явное «Применить».</p>
+        <div id="dbg-sync" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="margin-bottom:12px;">4. Таймлайн пользователя</h3>
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+          <div class="field" style="max-width:240px;margin:0;"><label>User ID</label><input type="text" id="dbg-tl-user" placeholder="user_id"></div>
+          <button class="btn btn-outline btn-sm" onclick="debugTimeline()">Показать</button>
+        </div>
+        <div id="dbg-timeline" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:12px;">5. Калькулятор proration</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <div class="field" style="min-width:120px;margin:0;"><label>Add-on</label>
+            <select id="dbg-calc-type">
+              <option value="devices_5">+5 устройств</option>
+              <option value="devices_10">+10 устройств</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:170px;margin:0;"><label>Тариф (или вручную)</label>
+            <select id="dbg-calc-tariff"><option value="">— (вручную)</option></select>
+          </div>
+          <div class="field" style="min-width:110px;margin:0;"><label>Дней (вручную)</label><input type="number" id="dbg-calc-days" placeholder="—"></div>
+          <div class="field" style="min-width:110px;margin:0;"><label>Скидка %</label><input type="number" id="dbg-calc-discount" placeholder="—"></div>
+          <div class="field" style="min-width:120px;margin:0;"><label>Осталось дней</label><input type="number" id="dbg-calc-rem" value="10" min="0" step="any"></div>
+          <button class="btn btn-dark btn-sm" style="align-self:flex-end;" onclick="debugCalc()">Рассчитать</button>
+        </div>
+        <div id="dbg-calc-out" style="margin-top:12px;"></div>
+      </div>
     </div>
   </main>
 </div>
@@ -386,6 +484,7 @@ function switchView(v){
   else if(v==='keys') loadKeys(1);
   else if(v==='stats') loadStats();
   else if(v==='settings') loadSettings();
+  else if(v==='debug') loadDebug();
 }
 
 // ====== DASHBOARD ======
@@ -776,6 +875,248 @@ async function saveDemo(){
     await api('/admin/settings/demo?enabled='+enabled,{method:'POST'});
     toast(enabled?'Демо-режим включён':'Демо-режим выключен');
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+// ====== DEBUG SANDBOX ======
+const ADMIN_NAME_STORAGE = 'awx_admin_name';
+function dbgVal(id){ return (document.getElementById(id).value||'').trim(); }
+function dbgConfirmEmail(){ return (document.getElementById('dbg-confirm-email').value||'').trim(); }
+function saveDebugAdminName(){ localStorage.setItem(ADMIN_NAME_STORAGE, dbgVal('dbg-admin-name')); }
+
+// debugApi добавляет обязательный X-Admin-Name поверх api() (которая ставит X-Admin-Key)
+async function debugApi(path, opts={}){
+  const name = dbgVal('dbg-admin-name');
+  if(!name){ toast('Укажите X-Admin-Name', 'error'); throw new Error('X-Admin-Name required'); }
+  localStorage.setItem(ADMIN_NAME_STORAGE, name);
+  const h = Object.assign({'X-Admin-Name': name}, opts.headers||{});
+  return api(path, Object.assign({}, opts, {headers:h}));
+}
+
+async function loadDebug(){
+  const el = document.getElementById('dbg-admin-name');
+  if(el && !el.value) el.value = localStorage.getItem(ADMIN_NAME_STORAGE)||'';
+  try{
+    const s = await api('/admin/settings');
+    const opts = Object.entries(s.tariffs||{}).map(([slug,t])=>`<option value="${esc(slug)}">${esc(t.title)} (${esc(slug)})</option>`).join('');
+    const paySel = document.getElementById('dbg-pay-tariff');
+    const calcSel = document.getElementById('dbg-calc-tariff');
+    if(paySel) paySel.innerHTML = '<option value="">—</option>'+opts;
+    if(calcSel) calcSel.innerHTML = '<option value="">— (вручную)</option>'+opts;
+  }catch(e){ /* настройки недоступны — селекты останутся пустыми */ }
+}
+
+// Модалка для разрушительного действия: всегда с явным полем confirm_email
+function debugConfirmModal(title, desc, confirmFn, extra=''){
+  showModal(`
+    <h2>${title}</h2>
+    <p style="font-size:14px;color:var(--text-2);margin-bottom:16px;">${desc}</p>
+    ${extra}
+    <div class="field">
+      <label>confirm_email <small style="color:var(--text-3);">— оставьте пустым для тестовых аккаунтов</small></label>
+      <input type="text" id="dbg-confirm-email" placeholder="email пользователя">
+    </div>
+    <button class="btn btn-dark btn-block" onclick="${confirmFn}">Подтвердить</button>
+  `);
+}
+
+// ---------- 1. Состояние пользователя / заказа ----------
+async function debugInspect(){
+  const userId = dbgVal('dbg-user-id'), orderId = dbgVal('dbg-order-id');
+  if(!userId||!orderId){ toast('Укажите user_id и order_id', 'error'); return; }
+  const el = document.getElementById('dbg-inspect');
+  el.innerHTML = '<div style="padding:8px;color:var(--text-2);">Загрузка…</div>';
+  try{
+    const [d, profile] = await Promise.all([
+      api(`/admin/debug/user/${encodeURIComponent(userId)}/devices?order_id=${encodeURIComponent(orderId)}`),
+      api(`/admin/users/${encodeURIComponent(userId)}`)
+    ]);
+    const badge = profile.is_test_account
+      ? '<span class="pill pill-active">Тестовый аккаунт</span>'
+      : '<span class="pill pill-blocked">⚠ Реальный пользователь — требуется подтверждение email</span>';
+    const sync = d.in_sync===null ? '—' : (d.in_sync ? '<span class="pill pill-active">В синхроне</span>' : '<span class="pill pill-blocked">Расхождение</span>');
+    const addonRows = (d.addons||[]).map(a=>`<tr><td><code style="font-size:12px;">${esc(a.id)}</code></td><td>${esc(a.addon_type)}</td><td>${esc(a.extra_devices)}</td><td>${statusPill(a.status)}</td><td>${money(a.amount_paid)}</td></tr>`).join('');
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <strong>${esc(profile.email||userId)}</strong> ${badge}
+      </div>
+      <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+        <div class="stat"><div class="stat-label">Базовый лимит</div><div class="stat-val">${d.base_devices}</div></div>
+        <div class="stat"><div class="stat-label">Extra (БД)</div><div class="stat-val">${d.extra_devices_db}</div></div>
+        <div class="stat"><div class="stat-label">Ожидается</div><div class="stat-val">${d.total_expected}</div></div>
+        <div class="stat"><div class="stat-label">Реальный 3x-UI</div><div class="stat-val">${d.real_limit_ip_in_3xui==null?'—':d.real_limit_ip_in_3xui}</div></div>
+      </div>
+      <div style="margin-top:8px;font-size:13px;">Синхронизация: ${sync} ${d.xui_error?`<span style="color:var(--danger,#D03B3B);">(${esc(d.xui_error)})</span>`:''}</div>
+      <div class="tbl-wrap" style="margin-top:10px;"><table><thead><tr><th>Add-on</th><th>Тип</th><th>Устр.</th><th>Статус</th><th>Сумма</th></tr></thead><tbody>${addonRows||'<tr><td colspan="5" class="tbl-empty">Нет add-on</td></tr>'}</tbody></table></div>
+    `;
+  }catch(e){ el.innerHTML = `<div style="color:var(--danger,#D03B3B);">Ошибка: ${esc(e.message)}</div>`; }
+}
+
+async function debugForceGrant(){
+  const userId = dbgVal('dbg-user-id'), orderId = dbgVal('dbg-order-id');
+  if(!userId||!orderId){ toast('Укажите user_id и order_id', 'error'); return; }
+  debugConfirmModal('Force-grant add-on', `Принудительная выдача add-on в обход оплаты.<br>Пользователь <strong>${esc(userId)}</strong>, заказ <strong>${esc(orderId)}</strong>.`,
+    'debugForceGrantRun()',
+    `<div class="field"><label>Тип add-on</label><select id="dbg-grant-type"><option value="devices_5">+5 устройств</option><option value="devices_10">+10 устройств</option></select></div>`);
+}
+async function debugForceGrantRun(){
+  try{
+    const d = await debugApi(`/admin/debug/user/${encodeURIComponent(dbgVal('dbg-user-id'))}/devices/force-grant?order_id=${encodeURIComponent(dbgVal('dbg-order-id'))}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addon_type: dbgVal('dbg-grant-type'), confirm_email: dbgConfirmEmail()})});
+    toast('Add-on выдан: '+d.addon_id+' (лимит '+d.new_limit+')');
+    closeModal(); debugInspect();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function debugCancelPending(){
+  const userId = dbgVal('dbg-user-id'), orderId = dbgVal('dbg-order-id');
+  if(!userId||!orderId){ toast('Укажите user_id и order_id', 'error'); return; }
+  debugConfirmModal('Force cancel-pending', `Перевод активного add-on в cancel_pending (имитация «Отказаться»).<br>Заказ <strong>${esc(orderId)}</strong>.`,
+    'debugCancelPendingRun()');
+}
+async function debugCancelPendingRun(){
+  try{
+    const d = await debugApi(`/admin/debug/user/${encodeURIComponent(dbgVal('dbg-user-id'))}/devices/force-cancel-pending?order_id=${encodeURIComponent(dbgVal('dbg-order-id'))}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_email: dbgConfirmEmail()})});
+    toast('Add-on переведён в cancel_pending: '+d.addon_id);
+    closeModal(); debugInspect();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function debugFinalizeCancel(){
+  const userId = dbgVal('dbg-user-id'), orderId = dbgVal('dbg-order-id');
+  if(!userId||!orderId){ toast('Укажите user_id и order_id', 'error'); return; }
+  debugConfirmModal('Force finalize cancel', `Немедленное завершение отмены: лимит → база, cancel_pending → cancelled.<br>Заказ <strong>${esc(orderId)}</strong>.`,
+    'debugFinalizeCancelRun()');
+}
+async function debugFinalizeCancelRun(){
+  try{
+    const d = await debugApi(`/admin/debug/user/${encodeURIComponent(dbgVal('dbg-user-id'))}/devices/force-finalize-cancel?order_id=${encodeURIComponent(dbgVal('dbg-order-id'))}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_email: dbgConfirmEmail()})});
+    toast('Отмен завершена: '+d.finalized_count+' add-on, лимит '+d.new_limit);
+    closeModal(); debugInspect();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function debugResetAll(){
+  const userId = dbgVal('dbg-user-id'), orderId = dbgVal('dbg-order-id');
+  if(!userId||!orderId){ toast('Укажите user_id и order_id', 'error'); return; }
+  debugConfirmModal('Reset all add-ons', `ПОЛНАЯ очистка add-on заказа <strong>${esc(orderId)}</strong> (только этого заказа, не всех подписок пользователя).`,
+    'debugResetAllRun()');
+}
+async function debugResetAllRun(){
+  try{
+    const d = await debugApi(`/admin/debug/user/${encodeURIComponent(dbgVal('dbg-user-id'))}/devices/reset-all?order_id=${encodeURIComponent(dbgVal('dbg-order-id'))}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_email: dbgConfirmEmail()})});
+    toast('Add-on удалены, лимит сброшен до '+d.reset_to);
+    closeModal(); debugInspect();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+// ---------- 2. Симулятор оплаты ----------
+async function debugMock(type){
+  const userId = dbgVal('dbg-pay-user');
+  if(!userId){ toast('Укажите user_id', 'error'); return; }
+  const purchaseType = dbgVal('dbg-pay-type');
+  const desc = type==='success'
+    ? 'Симуляция успешного вебхука: реальный провижининг в 3x-UI, без единого похода в Platega.'
+    : type==='fail'
+      ? 'Симуляция ошибки оплаты: статус failed/cancelled + проверка, что 3x-UI лимит не менялся.'
+      : 'Создание add-on заявки в pending (для проверки поведения фронта).';
+  debugConfirmModal('Mock: '+type, `${desc}<br>Пользователь <strong>${esc(userId)}</strong>, тип <strong>${esc(purchaseType)}</strong>.`,
+    `debugMockRun('${type}')`);
+}
+async function debugMockRun(type){
+  const body = {
+    user_id: dbgVal('dbg-pay-user'),
+    purchase_type: dbgVal('dbg-pay-type'),
+    order_id: dbgVal('dbg-pay-order') || null,
+    tariff_slug: dbgVal('dbg-pay-tariff') || null,
+    confirm_email: dbgConfirmEmail(),
+  };
+  try{
+    const d = await debugApi('/admin/debug/payment/mock-'+type, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    toast('Mock '+type+' выполнен');
+    closeModal();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+// ---------- 3. Автопродление и Force Sync ----------
+async function debugSimulateRenew(){
+  const orderId = dbgVal('dbg-renew-order');
+  if(!orderId){ toast('Укажите order_id', 'error'); return; }
+  debugConfirmModal('Simulate renew', `Реальная логика продления заказа <strong>${esc(orderId)}</strong> в обход rate-limit и 70%-порога (тестовый инструмент).`,
+    'debugSimulateRenewRun()');
+}
+async function debugSimulateRenewRun(){
+  try{
+    const d = await debugApi('/admin/debug/billing/simulate-renew', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id: dbgVal('dbg-renew-order'), confirm_email: dbgConfirmEmail()})});
+    toast('Продление выполнено');
+    document.getElementById('dbg-sync').innerHTML = `<div style="font-size:13px;">OK · новое истечение: <strong>${esc(d.new_expires_at)}</strong></div>`;
+    closeModal();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+async function debugForceSyncPreview(){
+  const orderId = dbgVal('dbg-renew-order');
+  if(!orderId){ toast('Укажите order_id', 'error'); return; }
+  const el = document.getElementById('dbg-sync');
+  el.innerHTML = '<div style="padding:8px;color:var(--text-2);">Загрузка…</div>';
+  try{
+    const d = await api(`/admin/debug/billing/force-sync-preview?order_id=${encodeURIComponent(orderId)}`);
+    const st = d.in_sync ? '<span class="pill pill-active">В синхроне</span>' : '<span class="pill pill-blocked">Расхождение</span>';
+    el.innerHTML = `Ожидаемый лимит: <strong>${d.expected_limit}</strong> · Реальный 3x-UI: <strong>${d.real_limit}</strong> · ${st}`+
+      (d.diff!=null && !d.in_sync ? ` <span style="font-size:12px;color:var(--text-2);">diff: ${d.diff>0?'+':''}${d.diff}</span>` : '');
+  }catch(e){ el.innerHTML = `<div style="color:var(--danger,#D03B3B);">Ошибка: ${esc(e.message)}</div>`; }
+}
+async function debugForceSyncApply(){
+  const orderId = dbgVal('dbg-renew-order');
+  if(!orderId){ toast('Укажите order_id', 'error'); return; }
+  debugConfirmModal('Force Sync (apply)', `Синхронизировать лимит заказа <strong>${esc(orderId)}</strong> с 3x-UI. Сначала покажите preview!`,
+    'debugForceSyncApplyRun()');
+}
+async function debugForceSyncApplyRun(){
+  try{
+    const d = await debugApi('/admin/debug/billing/force-sync-apply', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id: dbgVal('dbg-renew-order'), confirm_email: dbgConfirmEmail()})});
+    toast('Лимит синхронизирован: '+d.new_limit);
+    closeModal(); debugForceSyncPreview();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+// ---------- 4. Таймлайн ----------
+async function debugTimeline(){
+  const userId = dbgVal('dbg-tl-user');
+  if(!userId){ toast('Укажите user_id', 'error'); return; }
+  const el = document.getElementById('dbg-timeline');
+  el.innerHTML = '<div style="padding:8px;color:var(--text-2);">Загрузка…</div>';
+  try{
+    const d = await api(`/admin/debug/timeline/${encodeURIComponent(userId)}`);
+    const rows = (d.events||[]).map(e=>`<tr><td style="white-space:nowrap;">${esc(e.ts)}</td><td><code>${esc(e.type)}</code></td><td>${esc(e.detail)}</td></tr>`).join('');
+    el.innerHTML = `<div style="font-size:13px;margin-bottom:8px;color:var(--text-2);">${esc(d.email)} — ${d.events.length} событий</div>
+      <div class="tbl-wrap"><table><thead><tr><th>Время</th><th>Тип</th><th>Детали</th></tr></thead><tbody>${rows||'<tr><td colspan="3" class="tbl-empty">Нет событий</td></tr>'}</tbody></table></div>`;
+  }catch(e){ el.innerHTML = `<div style="color:var(--danger,#D03B3B);">Ошибка: ${esc(e.message)}</div>`; }
+}
+
+// ---------- 5. Калькулятор proration ----------
+async function debugCalc(){
+  const body = {
+    addon_type: dbgVal('dbg-calc-type'),
+    tariff_slug: dbgVal('dbg-calc-tariff'),
+    total_days: dbgVal('dbg-calc-days') ? parseInt(dbgVal('dbg-calc-days')) : null,
+    discount_pct: dbgVal('dbg-calc-discount') !== '' ? parseFloat(dbgVal('dbg-calc-discount')) : null,
+    remaining_days: parseFloat(dbgVal('dbg-calc-rem')||'0'),
+  };
+  const el = document.getElementById('dbg-calc-out');
+  try{
+    const d = await api('/admin/debug/proration-calc', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    el.innerHTML = `<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+      <div class="stat"><div class="stat-label">База</div><div class="stat-val">${money(d.base_price)}</div></div>
+      <div class="stat"><div class="stat-label">Скидка</div><div class="stat-val">${d.discount_pct}%</div></div>
+      <div class="stat"><div class="stat-label">Осталось дней</div><div class="stat-val">${d.remaining_days}</div></div>
+      <div class="stat"><div class="stat-label">raw (до ceil)</div><div class="stat-val">${d.raw_before_ceil}</div></div>
+      <div class="stat"><div class="stat-label">К оплате</div><div class="stat-val accent">${money(d.price_now)}</div></div>
+      <div class="stat"><div class="stat-label">Округление</div><div class="stat-val">${d.rounding_delta}</div></div>
+      <div class="stat"><div class="stat-label">След. продление</div><div class="stat-val">${money(d.next_recurring_price)}</div></div>
+    </div>`;
+  }catch(e){ el.innerHTML = `<div style="color:var(--danger,#D03B3B);">Ошибка: ${esc(e.message)}</div>`; }
 }
 
 // ====== INIT ======
