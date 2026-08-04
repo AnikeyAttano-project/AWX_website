@@ -198,6 +198,26 @@ async def init_db():
             await db.execute("ALTER TABLE users ADD COLUMN is_test_account INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass
+        # Миграция: fulfill state machine — durable статус выдачи ключа.
+        # Держим отдельно от status (оплата): payment 'paid' + fulfillment 'processing'.
+        # После добавления колонки бэкфиллим существующие заказы.
+        try:
+            await db.execute(
+                "ALTER TABLE orders ADD COLUMN fulfillment_status TEXT NOT NULL DEFAULT 'pending'"
+            )
+            await db.execute(
+                "ALTER TABLE orders ADD COLUMN fulfillment_started_at TEXT"
+            )
+            # Бэкфилл: уже выданные ключи и заказы с ошибкой
+            await db.execute(
+                "UPDATE orders SET fulfillment_status='completed' "
+                "WHERE sub_url IS NOT NULL AND sub_url != ''"
+            )
+            await db.execute(
+                "UPDATE orders SET fulfillment_status='failed' WHERE status='error'"
+            )
+        except Exception:
+            pass
         # Индексы для частых запросов
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_orders_tx ON orders(platega_tx_id)"
@@ -308,6 +328,73 @@ async def mark_order_error(order_id: str, error_msg: str):
             (error_msg, order_id),
         )
         await db.commit()
+
+
+# ————————————————— Fulfill state machine —————————————————
+# fulfillment_status — вторая ось состояния заказа, отдельная от status (оплата):
+#   status='paid'            + fulfillment_status='pending'    — деньги пришли, ключ не выдавали
+#   status='paid'            + fulfillment_status='processing' — ключ выдаётся прямо сейчас
+#   status='paid'            + fulfillment_status='completed'  — ключ выдан (sub_url заполнен)
+#   status='error'           + fulfillment_status='failed'     — выдача не удалась (можно ретраить)
+# durable 'processing' даёт crash-recovery: если процесс упал посреди выдачи,
+# claim остаётся в БД и пере-claim'ится после протухания (STALE_FULFILLMENT_SECONDS).
+
+# 'processing' старше этого срока считается брошенным (сервер упал) — пере-claim'им.
+STALE_FULFILLMENT_SECONDS = 120
+
+
+async def begin_fulfillment(order_id: str) -> bool:
+    """Атомарно занимает заказ на выдачу ключа (claim).
+
+    pending/failed → processing. Также пере-claim'ит 'processing', если выдача
+    была прервана (fulfillment_started_at старше STALE_FULFILLMENT_SECONDS).
+
+    Возвращает True, если ЭТОТ вызов теперь ответственен за выдачу ключа;
+    False — заказ уже выполняется/выполнен другим запросом.
+    """
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            """UPDATE orders
+               SET fulfillment_status = 'processing',
+                   fulfillment_started_at = datetime('now')
+               WHERE (id = ? AND fulfillment_status IN ('pending', 'failed'))
+                  OR (id = ? AND fulfillment_status = 'processing'
+                      AND (fulfillment_started_at IS NULL
+                           OR fulfillment_started_at <= datetime('now', ?)))
+               """,
+            (order_id, order_id, f'-{STALE_FULFILLMENT_SECONDS} seconds'),
+        )
+        return cur.rowcount > 0
+
+
+async def complete_fulfillment(order_id: str) -> bool:
+    """processing → completed (ключ выдан, sub_url сохранён)."""
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            """UPDATE orders
+               SET fulfillment_status = 'completed',
+                   fulfillment_started_at = NULL
+               WHERE id = ? AND fulfillment_status = 'processing'""",
+            (order_id,),
+        )
+        return cur.rowcount > 0
+
+
+async def fail_fulfillment(order_id: str, error: str) -> bool:
+    """processing → failed (выдача не удалась; заказ при этом помечается 'error')."""
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            """UPDATE orders
+               SET fulfillment_status = 'failed',
+                   fulfillment_started_at = NULL,
+                   error_msg = ?
+               WHERE id = ? AND fulfillment_status = 'processing'""",
+            (str(error)[:2000], order_id),
+        )
+        return cur.rowcount > 0
 
 
 async def set_order_custom_name(order_id: str, custom_name: str):

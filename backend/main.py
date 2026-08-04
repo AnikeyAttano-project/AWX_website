@@ -24,6 +24,7 @@ from database import (
     _db,
     init_db, load_runtime_settings, create_order, get_order, save_platega_tx,
     mark_paid, save_subscription, get_order_by_tx, mark_order_error,
+    begin_fulfillment, complete_fulfillment, fail_fulfillment,
     get_user_subscriptions, get_user_order, set_order_user,
     claim_trial, set_order_custom_name, mark_order_deleted,
     get_user_by_referral_code, apply_referral_code, ensure_referral_code,
@@ -1259,6 +1260,13 @@ async def fulfill_order(order_id: str):
             logger.info("Order %s already fulfilled", order_id)
             return
 
+        # State machine: атомарно занимаем заказ на выдачу ключа.
+        # pending/failed → processing; stale processing (сбойный процесс)
+        # пере-claim'ится. Если claim не удался — другой запрос уже выдаёт.
+        if not await begin_fulfillment(order_id):
+            logger.info("Order %s already being fulfilled by another request", order_id)
+            return
+
         if order.get("status") != "paid":
             await mark_paid(order_id)
 
@@ -1296,6 +1304,8 @@ async def fulfill_order(order_id: str):
                 inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
                 expires_at=expires_at,
             )
+            # State machine: processing → completed (ключ выдан)
+            await complete_fulfillment(order_id)
             logger.info(
                 "Order %s fulfilled successfully: email=%s sub_url=%s",
                 order_id, email, sub_url[:80],
@@ -1310,14 +1320,16 @@ async def fulfill_order(order_id: str):
                 )
 
         except XuiError as e:
-            # Логируем ошибку, заказ остаётся в статусе 'paid'
-            # но без выданного ключа — нужна ручная проверка
+            # Логируем ошибку, заказ переводим в 'error' (status) + 'failed'
+            # (fulfillment_status) — выдача не удалась, но ретрай возможен.
             logger.error("XuiError for order %s: %s", order_id, e)
             await mark_order_error(order_id, str(e))
+            await fail_fulfillment(order_id, str(e))
             return
         except Exception as e:
             logger.error("Unexpected error for order %s: %s", order_id, e)
             await mark_order_error(order_id, str(e))
+            await fail_fulfillment(order_id, str(e))
             return
 
     # НЕ удаляем лок — он остаётся как защита от повторных вызовов

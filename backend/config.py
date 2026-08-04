@@ -1,3 +1,5 @@
+import json
+
 from pathlib import Path
 
 from pydantic import field_validator
@@ -20,6 +22,14 @@ class Settings(BaseSettings):
     # SSL: отключить проверку сертификата для self-signed (3x-UI)
     # В продакшене с валидным сертификатом установите true
     xui_verify_ssl: bool = False
+
+    # Retry-конфигурация для операций с 3x-UI (create_client и др.).
+    # Задаётся через RETRY_CONFIG в .env как JSON-строка:
+    #   RETRY_CONFIG={"retries": 3, "base_delay": 0.5, "backoff": 1.0}
+    # retries     — сколько попыток сделать
+    # base_delay  — задержка перед первой повторной попыткой, сек
+    # backoff     — на сколько сек растёт задержка с каждой попыткой
+    retry_config: dict = {"retries": 3, "base_delay": 0.5, "backoff": 1.0}
 
     # Platega
     platega_merchant_id: str
@@ -70,6 +80,29 @@ class Settings(BaseSettings):
         "devices_5":  {"extra_devices": 5,  "base_price": 100, "title": "+5 устройств"},
         "devices_10": {"extra_devices": 10, "base_price": 170, "title": "+10 устройств"},
     }
+
+    @field_validator("retry_config")
+    @classmethod
+    def validate_retry_config(cls, v):
+        # Из .env приходит JSON-строка — парсим в dict.
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"RETRY_CONFIG должен быть валидным JSON: {e}"
+                ) from e
+        if not isinstance(v, dict):
+            raise ValueError("RETRY_CONFIG должен быть объектом JSON")
+        # Заполняем отсутствующие ключи дефолтами, валидируем типы.
+        defaults = {"retries": 3, "base_delay": 0.5, "backoff": 1.0}
+        for key, default in defaults.items():
+            val = v.get(key, default)
+            if not isinstance(val, (int, float)) or val < 0:
+                raise ValueError(f"RETRY_CONFIG.{key} должен быть числом >= 0")
+            v[key] = val
+        v["retries"] = max(1, int(v["retries"]))
+        return v
 
     @field_validator("xui_inbound_ids")
     @classmethod

@@ -48,6 +48,34 @@ def _get_email_lock(email: str) -> asyncio.Lock:
     return _email_locks[email]
 
 
+# ── Managed-panel-email guard ────────────────────────────────────────────────
+# Сайт создаёт клиентов в панели ТОЛЬКО как "<something>@vpn.local"
+# (см. fulfill_order / trial / rekey в main.py). Всё остальное в панели —
+# ручные клиенты админа или другой системы: их мутировать нельзя.
+PANEL_EMAIL_SUFFIX = "@vpn.local"
+
+
+def is_managed_panel_email(email: object) -> bool:
+    """Возвращает True, если email клиента создан этим сайтом.
+
+    Защита перед любой мутацией: отказываемся трогать клиентов панели,
+    которых мы не создавали (ручные, из бота, из других сервисов).
+    """
+    if not isinstance(email, str):
+        return False
+    return email.strip().casefold().endswith(PANEL_EMAIL_SUFFIX)
+
+
+def _require_managed_email(email: object) -> str:
+    """Проверяет email и возвращает его; иначе бросает XuiError."""
+    if not is_managed_panel_email(email):
+        raise XuiError(
+            f"Refusing to mutate unmanaged panel client: {email!r} "
+            f"(managed emails end with {PANEL_EMAIL_SUFFIX})"
+        )
+    return email
+
+
 class XuiError(Exception):
     pass
 
@@ -95,6 +123,7 @@ async def create_client(
 
     Возвращает: {"email": ..., "sub_id": ..., "uuid": ...}
     """
+    _require_managed_email(email)
     inbound_ids = _parse_inbound_ids()
     expiry = expiry_ms if expiry_ms is not None else _ms_timestamp(duration_days)
     body = {
@@ -133,9 +162,11 @@ async def create_client(
             raise XuiError(f"3x-UI add error: {msg}")
 
     # Шаг 2: получаем subId и uuid через GET /get/{email}
-    # Retry loop вместо sleep(0.3) — panelsync может быть медленным
-    for attempt in range(3):
-        await asyncio.sleep(0.5 + attempt * 1.0)
+    # Retry loop вместо sleep(0.3) — panelsync может быть медленным.
+    # Параметры ретраев — из RETRY_CONFIG (.env).
+    rc = settings.retry_config
+    for attempt in range(rc["retries"]):
+        await asyncio.sleep(rc["base_delay"] + attempt * rc["backoff"])
         resp = await client.get(
             f"{settings.xui_base_url}/panel/api/clients/get/{email}",
             headers=_headers(),
@@ -149,7 +180,7 @@ async def create_client(
                     "sub_id": client_obj["subId"],
                     "uuid": client_obj.get("uuid", ""),
                 }
-        if attempt < 2:
+        if attempt < rc["retries"] - 1:
             logger.debug("create_client: GET /get/%s attempt %d failed, retrying", email, attempt + 1)
 
     raise XuiError(f"3x-UI get error: client {email} not found after create")
@@ -220,6 +251,7 @@ async def get_client_info(email: str) -> dict:
 
 async def update_client_limit(email: str, new_limit_ip: int) -> dict:
     """Обновляет limit_ip клиента в 3x-UI. Защищено per-email lock от TOCTOU."""
+    _require_managed_email(email)
     async with _get_email_lock(email):
         return await _update_client_limit_unlocked(email, new_limit_ip)
 
@@ -266,6 +298,7 @@ async def renew_client(email: str, add_days: int) -> dict:
     Продление идёт от текущей даты истечения (max(current_expiry, now)).
     Защищено per-email lock от TOCTOU.
     """
+    _require_managed_email(email)
     async with _get_email_lock(email):
         return await _renew_client_unlocked(email, add_days)
 
@@ -355,6 +388,7 @@ async def delete_client(email: str) -> dict:
 
     Используется при удалении подписки и при перевыпуске ключа.
     """
+    _require_managed_email(email)
     client = await get_http_client()
     resp = await client.post(
         f"{settings.xui_base_url}/panel/api/clients/del/{email}",
@@ -379,14 +413,28 @@ async def rekey_client(
     total_gb: int = 0,
 ) -> dict:
     """
-    Перевыпуск ключа: удаляет старого клиента и создаёт нового с новым email.
+    Перевыпуск ключа: создаёт НОВОГО клиента, затем удаляет старого.
+
+    Порядок важен для атомарности: create-first, then delete. Если создание
+    нового клиента упадёт — старый ключ остаётся цел, подписка не потеряна.
 
     ``expiry_ms`` — дата истечения нового клиента (мс). Позволяет сохранить
     оставшееся время подписки при перевыпуске.
 
     Возвращает: {"email": ..., "sub_id": ..., "uuid": ...}
     """
-    # Удаляем старого клиента. Если он уже удалён (not found) — продолжаем.
+    _require_managed_email(old_email)
+    # Шаг 1: создаём нового клиента. При ошибке поднимаем XuiError —
+    # старый клиент не тронут, подписка продолжает работать.
+    result = await create_client(
+        email=new_email,
+        expiry_ms=expiry_ms,
+        limit_ip=limit_ip,
+        total_gb=total_gb,
+    )
+
+    # Шаг 2: удаляем старого клиента. Если он уже удалён (not found) —
+    # продолжаем. Ошибка удаления не фатальна: новый ключ уже работает.
     try:
         await delete_client(old_email)
     except XuiError as e:
@@ -394,12 +442,7 @@ async def rekey_client(
         if "not found" not in msg and "not exist" not in msg:
             logger.warning("Rekey: delete old client %s failed: %s", old_email, e)
 
-    return await create_client(
-        email=new_email,
-        expiry_ms=expiry_ms,
-        limit_ip=limit_ip,
-        total_gb=total_gb,
-    )
+    return result
 
 
 async def get_visible_inbound_ids() -> list[int]:
