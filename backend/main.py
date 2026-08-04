@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from config import settings
 from database import (
+    _db,
     init_db, load_runtime_settings, create_order, get_order, save_platega_tx,
     mark_paid, save_subscription, get_order_by_tx, mark_order_error,
     get_user_subscriptions, get_user_order, set_order_user,
@@ -154,6 +155,9 @@ async def lifespan(app: FastAPI):
     yield
 
     cleanup_task.cancel()
+    # Закрываем persistent httpx client для 3x-UI
+    from xui_client import close_http_client
+    await close_http_client()
 
 
 app = FastAPI(title="VPN Shop", lifespan=lifespan)
@@ -339,7 +343,7 @@ async def _renew_subscription_core(order_id: str, order: dict) -> dict:
         new_expires = datetime.utcfromtimestamp(result["new_expiry_ms"] / 1000).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
-        async with aiosqlite.connect(settings.database_path) as db:
+        async with _db() as db:
             await db.execute(
                 "UPDATE orders SET expires_at = ? WHERE id = ?",
                 (new_expires, order_id),
@@ -883,7 +887,7 @@ async def _grant_referral_days(
             new_expires = datetime.utcfromtimestamp(
                 result["new_expiry_ms"] / 1000
             ).strftime("%Y-%m-%d %H:%M:%S")
-            async with aiosqlite.connect(settings.database_path) as db:
+            async with _db() as db:
                 await db.execute(
                     "UPDATE orders SET expires_at = ? WHERE id = ?",
                     (new_expires, sub["id"]),

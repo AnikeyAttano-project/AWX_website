@@ -1,6 +1,7 @@
 import json
 import random
 import aiosqlite
+from contextlib import asynccontextmanager
 from config import settings
 
 # Алфавит реферальных кодов: без похожих символов O/0, I/1
@@ -102,12 +103,42 @@ CREATE TABLE IF NOT EXISTS debug_audit_log (
 """
 
 
+@asynccontextmanager
+async def _db():
+    """Открывает соединение с настроенными PRAGMA.
+
+    ВАЖНО: aiosqlite НЕ коммитит при выходе из контекста (только close()) —
+    поэтому записи фиксируются здесь явно: commit на успех, rollback на ошибку.
+
+    Это же закрывает per-connection PRAGMA: journal_mode=WAL хранится в файле БД,
+    а synchronous / busy_timeout / cache_size / temp_store / mmap_size /
+    foreign_keys действуют только на текущее соединение — их надо применять
+    к каждому новому соединению, а не один раз в init_db().
+    """
+    conn = await aiosqlite.connect(settings.database_path)
+    try:
+        await conn.execute("PRAGMA synchronous=NORMAL")       # оптимум для WAL
+        await conn.execute("PRAGMA busy_timeout=10000")        # ждать до 10с
+        await conn.execute("PRAGMA cache_size=-32768")         # 32MB кэш страниц
+        await conn.execute("PRAGMA temp_store=MEMORY")         # temp-таблицы в RAM
+        await conn.execute("PRAGMA mmap_size=134217728")       # 128MB mmap I/O
+        await conn.execute("PRAGMA foreign_keys=ON")           # целостность FK
+        yield conn
+        await conn.commit()
+    except BaseException:
+        await conn.rollback()
+        raise
+    finally:
+        await conn.close()
+
+
 async def init_db():
-    async with aiosqlite.connect(settings.database_path) as db:
-        # WAL mode — конкурентные чтения не блокируют запись
+    async with _db() as db:
+        # WAL mode — конкурентные чтения не блокируют запись.
+        # Это персистентная настройка файла БД (в отличие от per-connection PRAGMA,
+        # которые применяет _db()). Должна выполняться вне транзакции — на свежем
+        # соединении от _db() её ещё нет.
         await db.execute("PRAGMA journal_mode=WAL")
-        # Блокировка БД до 5 секунд при одновременной записи
-        await db.execute("PRAGMA busy_timeout=5000")
 
         await db.executescript(_CREATE)
         # Миграция: добавляем новые колонки если их нет
@@ -215,7 +246,7 @@ async def init_db():
 
 
 async def create_order(order_id: str, tariff: str, amount: float, capability_token: str = ""):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "INSERT INTO orders (id, tariff, amount, capability_token) VALUES (?, ?, ?, ?)",
             (order_id, tariff, amount, capability_token),
@@ -224,7 +255,7 @@ async def create_order(order_id: str, tariff: str, amount: float, capability_tok
 
 
 async def get_order(order_id: str) -> dict | None:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
         row = await cur.fetchone()
@@ -232,7 +263,7 @@ async def get_order(order_id: str) -> dict | None:
 
 
 async def save_platega_tx(order_id: str, tx_id: str):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE orders SET platega_tx_id = ? WHERE id = ?",
             (tx_id, order_id),
@@ -241,7 +272,8 @@ async def save_platega_tx(order_id: str, tx_id: str):
 
 
 async def mark_paid(order_id: str):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
         await db.execute(
             "UPDATE orders SET status = 'paid', paid_at = datetime('now') WHERE id = ?",
             (order_id,),
@@ -257,7 +289,8 @@ async def save_subscription(
     inbound_ids: str = "",
     expires_at: str = "",
 ):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
         await db.execute(
             """UPDATE orders
                SET xui_email = ?, xui_sub_id = ?, sub_url = ?, inbound_ids = ?, expires_at = ?
@@ -268,7 +301,8 @@ async def save_subscription(
 
 
 async def mark_order_error(order_id: str, error_msg: str):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
         await db.execute(
             "UPDATE orders SET status = 'error', error_msg = ? WHERE id = ?",
             (error_msg, order_id),
@@ -278,7 +312,7 @@ async def mark_order_error(order_id: str, error_msg: str):
 
 async def set_order_custom_name(order_id: str, custom_name: str):
     """Set the user-facing custom name for a subscription."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE orders SET custom_name = ? WHERE id = ?",
             (custom_name, order_id),
@@ -288,7 +322,7 @@ async def set_order_custom_name(order_id: str, custom_name: str):
 
 async def mark_order_deleted(order_id: str):
     """Mark an order as deleted (client removed from 3x-UI)."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE orders SET status = 'deleted' WHERE id = ?",
             (order_id,),
@@ -297,7 +331,7 @@ async def mark_order_deleted(order_id: str):
 
 
 async def get_order_by_tx(tx_id: str) -> dict | None:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM orders WHERE platega_tx_id = ?", (tx_id,)
@@ -309,7 +343,7 @@ async def get_order_by_tx(tx_id: str) -> dict | None:
 # ————————————————— Users —————————————————
 
 async def get_user_by_email(email: str) -> dict | None:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM users WHERE email = ?", (email,))
         row = await cur.fetchone()
@@ -317,7 +351,7 @@ async def get_user_by_email(email: str) -> dict | None:
 
 
 async def get_user_by_id(user_id: str) -> dict | None:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
         row = await cur.fetchone()
@@ -332,7 +366,7 @@ async def create_user(
     referral_code: str = None,
 ):
     code = referral_code or generate_referral_code()
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         # Гарантируем уникальность реферального кода
         for _ in range(30):
             cur = await db.execute(
@@ -349,14 +383,14 @@ async def create_user(
 
 
 async def set_user_verified(user_id: str):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute("UPDATE users SET verified = 1 WHERE id = ?", (user_id,))
         await db.commit()
 
 
 async def claim_trial(user_id: str, expires_at: str) -> bool:
     """Claim trial. Returns False if already used. Uses atomic UPDATE ... WHERE to avoid TOCTOU race."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "UPDATE users SET trial_started_at = datetime('now'), trial_expires_at = ? "
             "WHERE id = ? AND (trial_started_at IS NULL OR trial_started_at = '')",
@@ -370,7 +404,7 @@ async def claim_trial(user_id: str, expires_at: str) -> bool:
 
 async def get_user_subscriptions(user_id: str) -> list[dict]:
     """Get all orders (subscriptions) for a user, newest first. Deleted are hidden."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM orders WHERE user_id = ? AND status != 'deleted' ORDER BY created_at DESC",
@@ -382,7 +416,7 @@ async def get_user_subscriptions(user_id: str) -> list[dict]:
 
 async def get_user_order(user_id: str, order_id: str) -> dict | None:
     """Get a specific order belonging to a user."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM orders WHERE id = ? AND user_id = ?",
@@ -394,7 +428,7 @@ async def get_user_order(user_id: str, order_id: str) -> dict | None:
 
 async def set_order_user(order_id: str, user_id: str):
     """Link an order to a user."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE orders SET user_id = ? WHERE id = ?",
             (user_id, order_id),
@@ -406,7 +440,7 @@ async def set_order_user(order_id: str, user_id: str):
 
 async def get_setting(key: str, default: str = "") -> str:
     """Читает настройку реферальной программы (таблица referral_settings)."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "SELECT value FROM referral_settings WHERE key = ?", (key,)
         )
@@ -416,7 +450,7 @@ async def get_setting(key: str, default: str = "") -> str:
 
 async def set_setting(key: str, value: str):
     """Записывает настройку реферальной программы."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "INSERT INTO referral_settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -427,7 +461,7 @@ async def set_setting(key: str, value: str):
 
 async def ensure_referral_code(user_id: str) -> str | None:
     """Возвращает реферальный код пользователя, генерируя его при необходимости."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "SELECT referral_code FROM users WHERE id = ?", (user_id,)
         )
@@ -453,7 +487,7 @@ async def ensure_referral_code(user_id: str) -> str | None:
 
 async def get_user_by_referral_code(code: str) -> dict | None:
     """Находит пользователя по реферальному коду."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM users WHERE UPPER(referral_code) = ?", (code.upper(),)
@@ -464,7 +498,7 @@ async def get_user_by_referral_code(code: str) -> dict | None:
 
 async def get_user_referrer(user_id: str) -> str | None:
     """Возвращает ID пригласившего пользователя (referrer) или None."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "SELECT referred_by FROM users WHERE id = ?", (user_id,)
         )
@@ -481,7 +515,7 @@ async def apply_referral_code(user_id: str, referrer_id: str) -> bool:
     if user_id == referrer_id:
         return False
 
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         # Пользователь уже привязан к рефереру
         cur = await db.execute(
             "SELECT referred_by FROM users WHERE id = ?", (user_id,)
@@ -520,7 +554,7 @@ async def apply_referral_code(user_id: str, referrer_id: str) -> bool:
 
 async def add_referral_reward(referrer_id: str, referred_id: str, reward_days: int) -> bool:
     """Фиксирует начисление бонусных дней (суммируется по паре реферер/реферал)."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             """INSERT INTO referrals (referrer_id, referred_id, reward_days)
                VALUES (?, ?, ?)
@@ -534,7 +568,7 @@ async def add_referral_reward(referrer_id: str, referred_id: str, reward_days: i
 
 async def count_referrals(referrer_id: str) -> int:
     """Сколько пользователей пригласил реферер."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (referrer_id,)
         )
@@ -544,7 +578,7 @@ async def count_referrals(referrer_id: str) -> int:
 
 async def sum_reward_days(referrer_id: str) -> int:
     """Суммарное количество начисленных бонусных дней."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "SELECT COALESCE(SUM(reward_days), 0) FROM referrals WHERE referrer_id = ?",
             (referrer_id,),
@@ -555,7 +589,7 @@ async def sum_reward_days(referrer_id: str) -> int:
 
 async def get_referral_list(referrer_id: str) -> list[dict]:
     """Список приглашённых: referred_id, masked_email, reward_days, created_at."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """SELECT r.referred_id, r.reward_days, r.created_at, u.email
@@ -596,7 +630,7 @@ async def get_referral_levels() -> list[tuple[int, int]]:
 
 async def get_active_subscription(user_id: str) -> dict | None:
     """Последняя оплаченная подписка пользователя с привязкой к 3x-UI."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """SELECT * FROM orders
@@ -615,7 +649,7 @@ async def load_runtime_settings():
     """Load admin-editable settings from the settings table into the in-memory settings object."""
     import json
     try:
-        async with aiosqlite.connect(settings.database_path) as db:
+        async with _db() as db:
             db.row_factory = aiosqlite.Row
             cur = await db.execute("SELECT key, value FROM settings")
             rows = await cur.fetchall()
@@ -642,7 +676,7 @@ async def save_settings_value(key: str, value) -> None:
     """Write a JSON-serializable value to the settings table."""
     import json
     serialized = json.dumps(value, ensure_ascii=False, default=str)
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -653,7 +687,7 @@ async def save_settings_value(key: str, value) -> None:
 
 async def get_settings_value(key: str, default: str = "") -> str:
     """Read a raw string from the settings table."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute("SELECT value FROM settings WHERE key = ?", (key,))
         row = await cur.fetchone()
         return row[0] if row else default
@@ -662,7 +696,7 @@ async def get_settings_value(key: str, default: str = "") -> str:
 # ————————————————— Admin helpers —————————————————
 
 async def set_user_blocked(user_id: str, blocked: bool):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE users SET blocked = ? WHERE id = ?",
             (1 if blocked else 0, user_id),
@@ -671,7 +705,7 @@ async def set_user_blocked(user_id: str, blocked: bool):
 
 
 async def count_users(search: str = "") -> int:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         if search:
             cur = await db.execute(
                 "SELECT COUNT(*) FROM users WHERE email LIKE ?",
@@ -684,7 +718,7 @@ async def count_users(search: str = "") -> int:
 
 
 async def list_users_page(search: str, limit: int, offset: int) -> list[dict]:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         if search:
             cur = await db.execute(
@@ -702,15 +736,20 @@ async def list_users_page(search: str, limit: int, offset: int) -> list[dict]:
 
 
 async def delete_order(order_id: str):
-    """Physically remove an order from the database."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    """Physically remove an order from the database (and its add-ons).
+
+    Порядок важен: device_addons ссылается на orders через FK без
+    ON DELETE CASCADE, а PRAGMA foreign_keys=ON включён — поэтому
+    сначала удаляем дочерние add-ons, затем сам заказ.
+    """
+    async with _db() as db:
+        await db.execute("DELETE FROM device_addons WHERE order_id = ?", (order_id,))
         await db.execute("DELETE FROM orders WHERE id = ?", (order_id,))
-        await db.commit()
 
 
 async def cleanup_expired_orders(grace_days: int = 14) -> list[dict]:
     """Find and delete orders expired more than grace_days ago. Returns list of {id, xui_email}."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT id, xui_email FROM orders "
@@ -724,15 +763,18 @@ async def cleanup_expired_orders(grace_days: int = 14) -> list[dict]:
         if expired:
             ids = [r["id"] for r in expired]
             placeholders = ",".join("?" * len(ids))
+            # Сначала add-ons (FK без CASCADE, foreign_keys=ON), затем заказы
+            await db.execute(
+                f"DELETE FROM device_addons WHERE order_id IN ({placeholders})", ids
+            )
             await db.execute(f"DELETE FROM orders WHERE id IN ({placeholders})", ids)
-            await db.commit()
 
         return expired
 
 
 async def cleanup_expired_trials(grace_days: int = 14) -> int:
     """Reset trial fields for users whose trial expired more than grace_days ago. Returns count."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "UPDATE users SET trial_started_at = NULL, trial_expires_at = NULL "
             "WHERE trial_expires_at IS NOT NULL AND trial_expires_at < datetime('now', ?)",
@@ -747,7 +789,7 @@ async def cleanup_expired_trials(grace_days: int = 14) -> int:
 async def create_device_addon(addon_id: str, user_id: str, order_id: str,
                                addon_type: str, extra_devices: int, amount_paid: float,
                                expires_at: str, platega_tx_id: str = ""):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "INSERT INTO device_addons (id, user_id, order_id, addon_type, extra_devices, "
             "amount_paid, status, expires_at, platega_tx_id) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
@@ -758,7 +800,7 @@ async def create_device_addon(addon_id: str, user_id: str, order_id: str,
 
 async def get_device_addons_for_order(order_id: str) -> list[dict]:
     """Get all add-ons for a specific subscription order."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM device_addons WHERE order_id = ? ORDER BY created_at DESC",
@@ -769,7 +811,7 @@ async def get_device_addons_for_order(order_id: str) -> list[dict]:
 
 async def get_active_addon_for_order(order_id: str) -> dict | None:
     """Get the active (or cancel_pending) add-on for a subscription."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM device_addons WHERE order_id = ? AND status IN ('active', 'cancel_pending') "
@@ -781,7 +823,7 @@ async def get_active_addon_for_order(order_id: str) -> dict | None:
 
 
 async def activate_addon(addon_id: str):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE device_addons SET status = 'active' WHERE id = ?", (addon_id,)
         )
@@ -790,7 +832,7 @@ async def activate_addon(addon_id: str):
 
 async def cancel_pending_addon(addon_id: str):
     """Mark add-on as cancel_pending — will be removed at next renewal."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE device_addons SET status = 'cancel_pending' WHERE id = ? AND status = 'active'",
             (addon_id,),
@@ -800,7 +842,7 @@ async def cancel_pending_addon(addon_id: str):
 
 async def finalize_addon_cancellation(addon_id: str):
     """Actually cancel and remove add-on (called during renewal)."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE device_addons SET status = 'cancelled' WHERE id = ?", (addon_id,)
         )
@@ -808,7 +850,7 @@ async def finalize_addon_cancellation(addon_id: str):
 
 
 async def get_addon_by_tx(tx_id: str) -> dict | None:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM device_addons WHERE platega_tx_id = ?", (tx_id,)
@@ -818,7 +860,7 @@ async def get_addon_by_tx(tx_id: str) -> dict | None:
 
 
 async def get_addon_by_id(addon_id: str) -> dict | None:
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM device_addons WHERE id = ?", (addon_id,)
@@ -829,7 +871,7 @@ async def get_addon_by_id(addon_id: str) -> dict | None:
 
 async def get_total_extra_devices(order_id: str) -> int:
     """Sum of active extra devices for a subscription."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(
             "SELECT COALESCE(SUM(extra_devices), 0) FROM device_addons "
             "WHERE order_id = ? AND status = 'active'",
@@ -843,7 +885,7 @@ async def get_total_extra_devices(order_id: str) -> int:
 
 async def set_test_account(user_id: str, is_test: bool):
     """Помечает/снимает флаг тестового аккаунта (is_test_account)."""
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE users SET is_test_account = ? WHERE id = ?",
             (1 if is_test else 0, user_id),
@@ -864,7 +906,7 @@ async def log_debug_action(
     Если в будущем появятся несколько реальных людей с раздельным доступом —
     это место нужно будет заменить на настоящие именные учётки.
     """
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "INSERT INTO debug_audit_log (admin_name, action, target_user_id, details_json) "
             "VALUES (?, ?, ?, ?)",

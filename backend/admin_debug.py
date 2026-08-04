@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from admin import require_admin
 from config import settings
 from database import (
+    _db,
     get_user_by_id,
     get_order,
     get_user_subscriptions,
@@ -206,7 +207,7 @@ async def debug_timeline(user_id: str, limit: int = Query(100, le=500)):
                                       f"статус={a['status']}"})
 
     # + записи из debug_audit_log за этого пользователя
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT * FROM debug_audit_log WHERE target_user_id = ? "
@@ -354,7 +355,7 @@ async def debug_reset_all_addons(user_id: str, order_id: str, req: AddonCancelFo
     if not order or order["user_id"] != user_id:
         raise HTTPException(404, "Заказ не найден")
 
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute("DELETE FROM device_addons WHERE order_id = ?", (order_id,))
         await db.commit()
 
@@ -445,7 +446,7 @@ async def debug_mock_fail(req: MockFailRequest,
         addon = await get_addon_by_id(req.addon_id)
         if not addon or addon["user_id"] != req.user_id:
             raise HTTPException(404, "Add-on не найден")
-        async with aiosqlite.connect(settings.database_path) as db:
+        async with _db() as db:
             await db.execute("UPDATE device_addons SET status='cancelled' WHERE id=?", (req.addon_id,))
             await db.commit()
         order = await get_order(addon["order_id"])

@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from config import settings
 from database import (
+    _db,
     get_order, save_settings_value,
     set_user_blocked, count_users, list_users_page, get_user_by_id,
     get_user_subscriptions, mark_order_deleted,
@@ -90,14 +91,14 @@ class ReferralSettingsRequest(BaseModel):
 # -- DB helpers --
 
 async def _scalar(query, params=()):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         cur = await db.execute(query, params)
         row = await cur.fetchone()
     return row[0] if row else 0
 
 
 async def _fetchall(query, params=()):
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(query, params)
         rows = await cur.fetchall()
@@ -131,7 +132,7 @@ async def get_dashboard():
     week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d 00:00:00")
     month_start = (now - timedelta(days=29)).strftime("%Y-%m-%d 00:00:00")
 
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
 
         # Users
@@ -373,7 +374,7 @@ async def extend_key(order_id: str, req: ExtendKeyRequest):
         logger.error("Extend key failed for %s: %s", order_id, e)
         raise HTTPException(502, f"Panel error: {e}")
 
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "UPDATE orders SET expires_at = ?, status = 'paid', error_msg = NULL WHERE id = ?",
             (new_expires, order_id),
@@ -416,7 +417,7 @@ async def get_stats():
     month_start = (now - timedelta(days=29)).strftime("%Y-%m-%d 00:00:00")
     week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d 00:00:00")
 
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         db.row_factory = aiosqlite.Row
 
         # Basic counts
@@ -559,7 +560,7 @@ async def update_trial(req: TrialSettingsRequest):
 async def update_referral(req: ReferralSettingsRequest):
     enabled_val = "1" if req.enabled else "0"
 
-    async with aiosqlite.connect(settings.database_path) as db:
+    async with _db() as db:
         await db.execute(
             "INSERT INTO referral_settings (key, value) VALUES ('referral_enabled', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

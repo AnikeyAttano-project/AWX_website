@@ -6,6 +6,47 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# ── Persistent HTTP client (singleton) ──────────────────────────────────────
+# Все запросы к 3x-UI идут через одну сессию с connection pooling.
+# Раньше httpx.AsyncClient создавался на каждый вызов — лишний TLS handshake
+# на каждом запросе. Теперь: один TCP/TLS handshake → keep-alive → reuse.
+_http_client: httpx.AsyncClient | None = None
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Возвращает (или создаёт) единственный httpx.AsyncClient для 3x-UI."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            verify=_verify_ssl(),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+        )
+        logger.debug("Created new httpx.AsyncClient for 3x-UI")
+    return _http_client
+
+
+async def close_http_client():
+    """Закрывает persistent client при shutdown сервера."""
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+        logger.debug("Closed httpx.AsyncClient for 3x-UI")
+
+
+# ── Per-email locks (TOCTOU protection) ─────────────────────────────────────
+# update_client_limit и renew_client делают read-modify-write: GET → modify → POST.
+# Без лока два одновременных вызова перезапишут изменения друг друга.
+_email_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_email_lock(email: str) -> asyncio.Lock:
+    """Возвращает Lock для конкретного email (создаётся один раз)."""
+    if email not in _email_locks:
+        _email_locks[email] = asyncio.Lock()
+    return _email_locks[email]
+
 
 class XuiError(Exception):
     pass
@@ -69,12 +110,13 @@ async def create_client(
         "inboundIds": inbound_ids,  # ← КЛЮЧЕВОЕ: передаём весь список!
     }
 
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        # Шаг 1: создаём клиента во всех инбаундах
-        resp = await client.post(
-            f"{settings.xui_base_url}/panel/api/clients/add",
-            json=body, headers=_headers(),
-        )
+    client = await get_http_client()
+
+    # Шаг 1: создаём клиента во всех инбаундах
+    resp = await client.post(
+        f"{settings.xui_base_url}/panel/api/clients/add",
+        json=body, headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"3x-UI add error: HTTP {resp.status_code}")
@@ -91,30 +133,26 @@ async def create_client(
             raise XuiError(f"3x-UI add error: {msg}")
 
     # Шаг 2: получаем subId и uuid через GET /get/{email}
-    # Небольшая задержка на случай гонки БД
-    await asyncio.sleep(0.3)
-
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
+    # Retry loop вместо sleep(0.3) — panelsync может быть медленным
+    for attempt in range(3):
+        await asyncio.sleep(0.5 + attempt * 1.0)
         resp = await client.get(
             f"{settings.xui_base_url}/panel/api/clients/get/{email}",
             headers=_headers(),
         )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success"):
+                client_obj = data["obj"]["client"]
+                return {
+                    "email": email,
+                    "sub_id": client_obj["subId"],
+                    "uuid": client_obj.get("uuid", ""),
+                }
+        if attempt < 2:
+            logger.debug("create_client: GET /get/%s attempt %d failed, retrying", email, attempt + 1)
 
-    if resp.status_code != 200:
-        raise XuiError(f"3x-UI get error: HTTP {resp.status_code}")
-
-    data = resp.json()
-    if not data.get("success"):
-        raise XuiError(f"3x-UI get error: {data.get('msg')}")
-
-    # data["obj"]["client"] — полная структура ответа
-    client_obj = data["obj"]["client"]
-
-    return {
-        "email": email,
-        "sub_id": client_obj["subId"],
-        "uuid": client_obj.get("uuid", ""),
-    }
+    raise XuiError(f"3x-UI get error: client {email} not found after create")
 
 
 async def get_subscription_url(sub_id: str) -> str:
@@ -132,11 +170,11 @@ async def get_share_links(sub_id: str) -> list[str]:
     Получает отдельные vless:// / hysteria:// ссылки (для отображения/QR).
     /subLinks возвращает массив строк!
     """
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.get(
-            f"{settings.xui_base_url}/panel/api/clients/subLinks/{sub_id}",
-            headers=_headers(),
-        )
+    client = await get_http_client()
+    resp = await client.get(
+        f"{settings.xui_base_url}/panel/api/clients/subLinks/{sub_id}",
+        headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"subLinks error: HTTP {resp.status_code}")
@@ -167,11 +205,11 @@ async def get_client_info(email: str) -> dict:
     Используется дебаг-песочницей для Force Sync Preview и инспекции
     реального limitIp в 3x-UI относительно ожидаемого в БД.
     """
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.get(
-            f"{settings.xui_base_url}/panel/api/clients/get/{email}",
-            headers=_headers(),
-        )
+    client = await get_http_client()
+    resp = await client.get(
+        f"{settings.xui_base_url}/panel/api/clients/get/{email}",
+        headers=_headers(),
+    )
     if resp.status_code != 200:
         raise XuiError(f"Cannot find client {email}: HTTP {resp.status_code}")
     data = resp.json()
@@ -181,12 +219,18 @@ async def get_client_info(email: str) -> dict:
 
 
 async def update_client_limit(email: str, new_limit_ip: int) -> dict:
-    """Обновляет limit_ip клиента в 3x-UI."""
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.get(
-            f"{settings.xui_base_url}/panel/api/clients/get/{email}",
-            headers=_headers(),
-        )
+    """Обновляет limit_ip клиента в 3x-UI. Защищено per-email lock от TOCTOU."""
+    async with _get_email_lock(email):
+        return await _update_client_limit_unlocked(email, new_limit_ip)
+
+
+async def _update_client_limit_unlocked(email: str, new_limit_ip: int) -> dict:
+    """Внутренняя реализация — вызывается из-под lock."""
+    client = await get_http_client()
+    resp = await client.get(
+        f"{settings.xui_base_url}/panel/api/clients/get/{email}",
+        headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"Cannot find client {email}: HTTP {resp.status_code}")
@@ -199,11 +243,10 @@ async def update_client_limit(email: str, new_limit_ip: int) -> dict:
     current.pop("id", None)
     current["limitIp"] = new_limit_ip
 
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.post(
-            f"{settings.xui_base_url}/panel/api/clients/update/{email}",
-            json=current, headers=_headers(),
-        )
+    resp = await client.post(
+        f"{settings.xui_base_url}/panel/api/clients/update/{email}",
+        json=current, headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"3x-UI update limit error: HTTP {resp.status_code}")
@@ -221,13 +264,21 @@ async def renew_client(email: str, add_days: int) -> dict:
     а не патч — поэтому сначала читаем текущую.
 
     Продление идёт от текущей даты истечения (max(current_expiry, now)).
+    Защищено per-email lock от TOCTOU.
     """
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        # 1. Читаем текущие данные
-        resp = await client.get(
-            f"{settings.xui_base_url}/panel/api/clients/get/{email}",
-            headers=_headers(),
-        )
+    async with _get_email_lock(email):
+        return await _renew_client_unlocked(email, add_days)
+
+
+async def _renew_client_unlocked(email: str, add_days: int) -> dict:
+    """Внутренняя реализация — вызывается из-под lock."""
+    client = await get_http_client()
+
+    # 1. Читаем текущие данные
+    resp = await client.get(
+        f"{settings.xui_base_url}/panel/api/clients/get/{email}",
+        headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"Cannot find client {email}: HTTP {resp.status_code}")
@@ -253,11 +304,10 @@ async def renew_client(email: str, add_days: int) -> dict:
     current["enable"] = True
 
     # 3. Отправляем ПОЛНУЮ модель
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.post(
-            f"{settings.xui_base_url}/panel/api/clients/update/{email}",
-            json=current, headers=_headers(),
-        )
+    resp = await client.post(
+        f"{settings.xui_base_url}/panel/api/clients/update/{email}",
+        json=current, headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"3x-UI update error: HTTP {resp.status_code}")
@@ -273,11 +323,11 @@ async def check_client_status(email: str) -> dict:
     """
     Проверяет статус клиента (активен, сколько осталось, сколько потрачено).
     """
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.get(
-            f"{settings.xui_base_url}/panel/api/clients/get/{email}",
-            headers=_headers(),
-        )
+    client = await get_http_client()
+    resp = await client.get(
+        f"{settings.xui_base_url}/panel/api/clients/get/{email}",
+        headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"Client not found: {email} (HTTP {resp.status_code})")
@@ -305,11 +355,11 @@ async def delete_client(email: str) -> dict:
 
     Используется при удалении подписки и при перевыпуске ключа.
     """
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.post(
-            f"{settings.xui_base_url}/panel/api/clients/del/{email}",
-            headers=_headers(),
-        )
+    client = await get_http_client()
+    resp = await client.post(
+        f"{settings.xui_base_url}/panel/api/clients/del/{email}",
+        headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"3x-UI delete error: HTTP {resp.status_code}")
@@ -357,11 +407,11 @@ async def get_visible_inbound_ids() -> list[int]:
     Получает список видимых инбаундов с панели, фильтруя --! префикс.
     Улучшение: если в .env список не задан — получаем динамически.
     """
-    async with httpx.AsyncClient(timeout=30, verify=_verify_ssl()) as client:
-        resp = await client.get(
-            f"{settings.xui_base_url}/panel/api/inbounds/list",
-            headers=_headers(),
-        )
+    client = await get_http_client()
+    resp = await client.get(
+        f"{settings.xui_base_url}/panel/api/inbounds/list",
+        headers=_headers(),
+    )
 
     if resp.status_code != 200:
         raise XuiError(f"inbounds/list error: HTTP {resp.status_code}")
