@@ -260,11 +260,11 @@ async def get_subscription_detail(order_id: str, user: dict = Depends(get_option
 @account_router.post("/renew/{order_id}")
 async def renew_subscription(order_id: str, request: Request, user: dict = Depends(get_optional_user)):
     """
-    Продление подписки. Защита от злоупотреблений:
+    Продление подписки. Работает как в ТГ-боте: оплата → продление в любой момент.
+    Защита от злоупотреблений:
     - Требует авторизации
-    - Rate-limit: 1 продление в 24 часа на пользователя
+    - Rate-limit: 1 продление в 24 часа на ПОДПИСКУ (не на пользователя)
     - Подписка должна быть активной (не удалённой)
-    - Продление разрешено только если прошло ≥70% от срока подписки
     """
     if not user:
         raise HTTPException(401, "Требуется авторизация")
@@ -276,30 +276,12 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
     if not order.get("xui_email"):
         raise HTTPException(400, "Нет привязки к 3x-UI клиенту")
 
-    # Сначала проверяем 70% срока (быстрый отказ, НЕConsuming rate-limit)
-    if order.get("expires_at"):
-        try:
-            expires_at = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
-            tariff = settings.tariffs.get(order["tariff"])
-            total_days = tariff["days"] if tariff else 30
-            now = datetime.utcnow()
-            order_created = expires_at - timedelta(days=total_days)
-            elapsed = (now - order_created).total_seconds()
-            required = total_days * 86400 * 0.7  # 70% от срока
-            if elapsed < required:
-                remaining_pct = int((1 - elapsed / (total_days * 86400)) * 100)
-                raise HTTPException(
-                    400,
-                    f"Продление доступно после использования 70% подписки. "
-                    f"Осталось {remaining_pct}% срока. Попробуйте позже."
-                )
-        except ValueError:
-            pass  # Если дата некорректна — пропускаем проверку
-
-    # Rate-limit: 1 продление в 24 часа на пользователя (только после прохождения 70%)
-    renew_key = f"renew:{user['id']}"
+    # Rate-limit: 1 продление в 24 часа на подписку.
+    # Продление добавляет tariff.days от max(текущее истечение, сейчас) —
+    # накрутка одного ключа ограничена, а продление разных подписок не блокируется.
+    renew_key = f"renew:{user['id']}:{order_id}"
     if not check_rate_limit(renew_key, max_requests=1, window_minutes=1440):
-        logger.warning("Renew rate limit exceeded for user: %s", user["id"])
+        logger.warning("Renew rate limit exceeded for order: %s", order_id)
         raise HTTPException(429, "Продление доступно не чаще 1 раза в сутки. Попробуйте позже.")
 
     return await _renew_subscription_core(order_id, order)
@@ -307,7 +289,7 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
 
 async def _renew_subscription_core(order_id: str, order: dict) -> dict:
     """
-    Внутренняя логика продления подписки (БЕЗ проверок доступа/70%/rate-limit).
+    Внутренняя логика продления подписки (БЕЗ проверок доступа/rate-limit).
 
     Выделена из renew_subscription, чтобы и HTTP-эндпоинт, и дебаг-симулятор
     /admin/debug/billing/simulate-renew звали одну и ту же логику (не дублировать).

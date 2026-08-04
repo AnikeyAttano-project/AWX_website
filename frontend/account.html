@@ -594,7 +594,15 @@ async function apiFetch(path, options = {}) {
   try { data = await resp.json(); } catch (e) { /* пустой ответ */ }
 
   if (!resp.ok) {
-    const message = (data && (data.detail || data.message)) || ('Ошибка сервера (' + resp.status + ')');
+    let message = data && (data.detail || data.message);
+    // FastAPI validation errors (422): detail — массив объектов с полем msg.
+    // Иначе new Error(массив) даёт "[object Object]".
+    if (Array.isArray(message)) {
+      message = message.map(e => e && e.msg).filter(Boolean).join('; ');
+    } else if (message && typeof message === 'object') {
+      message = message.msg || JSON.stringify(message);
+    }
+    message = message || ('Ошибка сервера (' + resp.status + ')');
     const err = new Error(message);
     err.status = resp.status;
     throw err;
@@ -1473,6 +1481,7 @@ async function buyAddon() {
   try {
     const data = await apiFetch(`/api/account/subscription/${addonOrderId}/addon`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ addon_type: addonType })
     });
 

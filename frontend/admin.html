@@ -1044,7 +1044,7 @@ async function debugMockRun(type){
 async function debugSimulateRenew(){
   const orderId = dbgVal('dbg-renew-order');
   if(!orderId){ toast('Укажите order_id', 'error'); return; }
-  debugConfirmModal('Simulate renew', `Реальная логика продления заказа <strong>${esc(orderId)}</strong> в обход rate-limit и 70%-порога (тестовый инструмент).`,
+  debugConfirmModal('Simulate renew', `Реальная логика продления заказа <strong>${esc(orderId)}</strong> в обход rate-limit (тестовый инструмент).`,
     'debugSimulateRenewRun()');
 }
 async function debugSimulateRenewRun(){

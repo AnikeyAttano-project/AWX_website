@@ -519,7 +519,7 @@ class RenewSimRequest(ConfirmedAction):
 async def debug_simulate_renew(req: RenewSimRequest,
                                x_admin_name: str = Depends(require_admin_name)):
     """Вызывает РЕАЛЬНУЮ логику продления (ту же, что дергает пользовательский
-    эндпоинт), но в обход rate-limit и 70%-порога — это тестовый инструмент,
+    эндпоинт), но в обход rate-limit — это тестовый инструмент,
     не платёжный обход для реальных пользователей."""
     order = await get_order(req.order_id)
     if not order:
