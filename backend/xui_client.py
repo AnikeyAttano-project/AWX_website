@@ -106,7 +106,9 @@ def _parse_inbound_ids() -> list[int]:
 
 
 def _available_inbound_ids() -> list[int]:
-    """Все доступные инбаунды (из env) — для валидации/чекбоксов админки."""
+    """Все доступные инбаунды (приоритет: settings.available_inbounds > XUI_INBOUND_IDS)."""
+    if settings.available_inbounds:
+        return [int(x) for x in settings.available_inbounds]
     return _parse_inbound_ids()
 
 

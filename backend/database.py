@@ -1063,6 +1063,8 @@ async def load_runtime_settings():
                 settings.trial_devices = int(value.get("devices", settings.trial_devices))
             elif key == "demo_mode" and isinstance(value, dict):
                 settings.demo_mode = bool(value.get("enabled", False))
+            elif key == "available_inbounds" and isinstance(value, list):
+                settings.available_inbounds = [int(x) for x in value if isinstance(x, (int, str)) and str(x).strip().isdigit()]
     except Exception:
         pass
 

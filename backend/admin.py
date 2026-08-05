@@ -18,6 +18,7 @@ Endpoints:
     POST   /admin/settings/tariffs    — update and persist tariffs
     POST   /admin/settings/trial      — update trial settings
     POST   /admin/settings/referral   — update referral settings
+    POST   /admin/settings/inbounds  — update available inbound IDs
     POST   /admin/tariffs             — (legacy) hot-replace tariffs + persist
 """
 
@@ -109,6 +110,10 @@ class BrandingRequest(BaseModel):
     site_name: str = Field(min_length=1, max_length=60)
     accent_color: str = Field(default="#1F5F52")
     support_contact: str = Field(default="", max_length=120)
+
+
+class InboundsRequest(BaseModel):
+    inbounds: list[int] = Field(default_factory=list)
 
 
 class PaymentSettingsRequest(BaseModel):
@@ -689,6 +694,15 @@ async def update_branding(req: BrandingRequest):
     await save_settings_value("branding", branding)
     logger.info("Admin updated branding: site_name=%s", branding["site_name"])
     return {"ok": True, "branding": branding}
+
+
+@admin_router.post("/settings/inbounds")
+async def update_inbounds(req: InboundsRequest):
+    """Обновить пул доступных инбаундов. Сохраняется в БД."""
+    settings.available_inbounds = req.inbounds
+    await save_settings_value("available_inbounds", req.inbounds)
+    logger.info("Admin updated inbounds: %s", req.inbounds)
+    return {"ok": True, "available_inbounds": req.inbounds}
 
 
 @admin_router.post("/settings/payment")

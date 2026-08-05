@@ -843,6 +843,11 @@ async function loadSettings(){
     window.__adminGroupIds = Object.keys(d.tariff_groups || {});
     let html = '';
 
+    // Available Inbounds editor
+    html += `<div class="chart-card"><div class="chart-title">Доступные инбаунды</div>
+      <div id="inbounds-editor">${renderInboundsEditor(d.available_inbounds||[])}</div>
+    </div>`;
+
     // Tariffs editor
     html += `<div class="chart-card"><div class="chart-title">Тарифы</div>
       <div id="tariffs-editor">${renderTariffEditor(d.tariffs, d.available_inbounds||[])}</div>
@@ -936,6 +941,89 @@ async function loadSettings(){
 
     el.innerHTML = html;
   }catch(e){ el.innerHTML = `<p style="color:var(--err);text-align:center;padding:48px;">Ошибка: ${esc(e.message)}</p>`; }
+}
+
+function renderInboundsEditor(inbounds) {
+  const ibs = inbounds || [];
+  const pills = ibs.map(id =>
+    `<span class="inb-pill" style="position:relative;" data-val="${id}">
+      <button class="btn btn-danger btn-sm" onclick="removeInbound(${id})" style="position:absolute;top:-6px;right:-6px;padding:0;width:14px;height:14px;font-size:10px;border-radius:50%;line-height:1;">×</button>
+      ${id}
+    </span>`
+  ).join('');
+
+  return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <input type="number" id="new-inbound-id" placeholder="ID" min="1" style="width:80px;padding:8px 10px;font-size:14px;border:1px solid var(--border);border-radius:6px;">
+      <button class="btn btn-outline btn-sm" onclick="addInbound()">+ Добавить</button>
+    </div>
+  </div>
+  <div class="inb-pills" id="inbounds-pills" style="min-height:40px;">
+    ${pills || '<span style="color:var(--text-3);font-size:13px;">Нет инбаундов</span>'}
+  </div>
+  <div style="display:flex;gap:8px;margin-top:12px;">
+    <button class="btn btn-dark btn-sm" onclick="saveInbounds()">Сохранить инбаунды</button>
+    <span id="inbounds-status" style="font-size:12px;color:var(--text-3);align-self:center;"></span>
+  </div>`;
+}
+
+function addInbound() {
+  const input = document.getElementById('new-inbound-id');
+  const id = parseInt(input.value);
+  if (!id || id < 1) return;
+
+  if (!window.__availableInbounds) window.__availableInbounds = [];
+  if (window.__availableInbounds.includes(id)) {
+    input.style.borderColor = 'var(--err)';
+    setTimeout(() => input.style.borderColor = '', 1500);
+    return;
+  }
+  window.__availableInbounds.push(id);
+  window.__availableInbounds.sort((a,b) => a - b);
+  renderInboundsPills();
+  input.value = '';
+  document.getElementById('inbounds-status').textContent = 'Есть несохранённые изменения';
+  document.getElementById('inbounds-status').style.color = 'var(--warn)';
+}
+
+function removeInbound(id) {
+  window.__availableInbounds = (window.__availableInbounds || []).filter(x => x !== id);
+  renderInboundsPills();
+  document.getElementById('inbounds-status').textContent = 'Есть несохранённые изменения';
+  document.getElementById('inbounds-status').style.color = 'var(--warn)';
+}
+
+function renderInboundsPills() {
+  const ibs = window.__availableInbounds || [];
+  const container = document.getElementById('inbounds-pills');
+  if (!container) return;
+  if (!ibs.length) {
+    container.innerHTML = '<span style="color:var(--text-3);font-size:13px;">Нет инбаундов</span>';
+    return;
+  }
+  container.innerHTML = ibs.map(id => `
+    <span class="inb-pill" style="position:relative;" data-val="${id}">
+      <button class="btn btn-danger btn-sm" onclick="removeInbound(${id})" style="position:absolute;top:-6px;right:-6px;padding:0;width:14px;height:14px;font-size:10px;border-radius:50%;line-height:1;">×</button>
+      ${id}
+    </span>`
+  ).join('');
+}
+
+async function saveInbounds() {
+  const inbs = window.__availableInbounds || [];
+  try {
+    await api('/admin/settings/inbounds', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ inbounds: inbs })
+    });
+    document.getElementById('inbounds-status').textContent = 'Сохранено';
+    document.getElementById('inbounds-status').style.color = 'var(--ok)';
+    setTimeout(() => document.getElementById('inbounds-status').textContent = '', 2000);
+  } catch(e) {
+    document.getElementById('inbounds-status').textContent = 'Ошибка: ' + e.message;
+    document.getElementById('inbounds-status').style.color = 'var(--err)';
+  }
 }
 
 function renderTariffEditor(tariffs, availableInbounds){

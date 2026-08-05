@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
 
+    # Редактируемый пул инбаундов (если пусто — берётся из XUI_INBOUND_IDS).
+    available_inbounds: list[int] = []
+
     # Trial subscription
     trial_enabled: bool = True
     trial_days: int = 3
