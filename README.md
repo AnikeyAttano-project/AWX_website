@@ -248,7 +248,7 @@ sequenceDiagram
 | `GET` | `/settings` | Текущие настройки (тарифы, группы, `available_inbounds`, триал, рефералка) |
 | `POST` | `/settings/tariffs` | Обновление тарифов (вкл. `inbounds`) |
 | `POST` | `/settings/tariff_groups` | Сохранение групп тарифов (создание/редактирование/удаление, валидация) |
-| `POST` | `/settings/branding` | Брендинг: `{site_name, accent_color, support_contact}` |
+| `POST` | `/settings/branding` | Брендинг: `site_name`, `accent_color`, `support_contact`, `logo_data_url` (base64 ≤300КБ), `hero_title`, `hero_subtitle`, `site_description`, `footer_text` |
 | `GET` | `/settings/export` | Экспорт всех настроек в JSON (бэкап) |
 | `POST` | `/settings/import` | Импорт настроек из JSON (с валидацией) |
 | `POST` | `/settings/payment` | Выбор активной платёжки + настройки ЮKassa |

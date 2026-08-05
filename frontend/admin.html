@@ -110,6 +110,24 @@
   .inb-pill{display:inline-flex;align-items:center;padding:5px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-2);background:var(--surface);transition:all .12s;user-select:none;}
   .inb-pill:hover{border-color:var(--text-3);background:#f8f8f6;}
   .inb-pill.sel{background:var(--accent);color:#fff;border-color:var(--accent);}
+  /* Часть 6: лейаут настроек (редакторы + липкое превью витрины) */
+  .settings-layout{display:grid;grid-template-columns:1fr 320px;gap:18px;align-items:start;}
+  @media (max-width:1100px){.settings-layout{grid-template-columns:1fr;}.preview-sticky{position:static!important;}}
+  .preview-sticky{position:sticky;top:20px;}
+  .preview-mini{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);}
+  .preview-mini .pv-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border);}
+  .preview-mini .pv-logo{width:22px;height:22px;object-fit:contain;flex-shrink:0;border-radius:4px;}
+  .preview-mini .pv-name{font-weight:700;font-size:14px;}
+  .preview-mini .pv-hero{padding:18px 16px;text-align:center;border-bottom:1px solid var(--border);}
+  .preview-mini .pv-hero h4{font-size:15px;margin-bottom:4px;}
+  .preview-mini .pv-hero p{font-size:11.5px;color:var(--text-3);margin:0;}
+  .preview-mini .pv-card{margin:14px 16px 16px;border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;position:relative;}
+  .preview-mini .pv-badge{position:absolute;top:8px;right:8px;background:#dc2626;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;}
+  .preview-mini .pv-card h5{font-size:14px;margin-bottom:4px;}
+  .preview-mini .pv-desc{font-size:11px;color:var(--text-2);margin:0 0 8px;}
+  .preview-mini .pv-price{font-size:24px;font-weight:700;color:var(--accent);}
+  .preview-mini .pv-feats{list-style:none;text-align:left;margin:10px 0 0;padding:0;font-size:11px;color:var(--text-2);}
+  .preview-mini .pv-feats li{padding:3px 0;display:flex;gap:6px;align-items:center;}
   .chart-svg{width:100%;}
   .bar-chart{display:flex;align-items:flex-end;gap:3px;height:140px;padding:0 4px;}
   .bar{flex:1;min-width:4px;border-radius:3px 3px 0 0;position:relative;cursor:pointer;transition:opacity .15s;}
@@ -980,14 +998,31 @@ async function loadSettings(){
       <button class="btn btn-dark" style="margin-top:12px;" onclick="savePayment()">Сохранить платёжную систему</button>
     </div>`;
 
-    // Branding editor
+    // Branding editor (Часть 6: лого + тексты витрины)
     const b = d.branding || {};
+    window.__brandLogo = b.logo_data_url || '';
     html += `<div class="chart-card"><div class="chart-title">Брендинг</div>
       <div class="form-row">
-        <div class="field" style="flex:1.5;"><label>Название сайта</label><input id="b-name" value="${esc(b.site_name||'')}"></div>
-        <div class="field" style="flex:1;"><label>Акцентный цвет</label><input id="b-accent" type="color" value="${esc(b.accent_color||'#1F5F52')}" style="height:38px;padding:2px;cursor:pointer;"></div>
+        <div class="field" style="flex:1.5;"><label>Название сайта</label><input id="b-name" value="${esc(b.site_name||'')}" oninput="updatePreview()"></div>
+        <div class="field" style="flex:1;"><label>Акцентный цвет</label><input id="b-accent" type="color" value="${esc(b.accent_color||'#1F5F52')}" style="height:38px;padding:2px;cursor:pointer;" oninput="updatePreview()"></div>
         <div class="field" style="flex:1.5;"><label>Контакт поддержки</label><input id="b-support" value="${esc(b.support_contact||'')}" placeholder="support@example.com"></div>
       </div>
+      <div class="form-row">
+        <div class="field" style="flex:1.2;"><label>Логотип <small style="color:var(--text-3);">PNG/JPEG/SVG, до 300 КБ</small></label>
+          <input type="file" id="b-logo-file" accept="image/png,image/jpeg,image/svg+xml" style="display:none;" onchange="brandLogoFromFile(event)">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('b-logo-file').click()">Загрузить</button>
+            <img id="b-logo-preview" ${b.logo_data_url ? `src="${b.logo_data_url}"` : ''} style="width:26px;height:26px;object-fit:contain;${b.logo_data_url?'':'display:none;'}" alt="лого">
+            <button class="btn btn-danger btn-sm" id="b-logo-clear" ${b.logo_data_url?'':'style="display:none;"'} onclick="brandLogoClear()">✕ Убрать</button>
+          </div>
+        </div>
+        <div class="field" style="flex:1.4;"><label>Meta-описание</label><input id="b-desc" value="${esc(b.site_description||'')}" placeholder="SEO-описание сайта" oninput="updatePreview()"></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Заголовок первого экрана</label><input id="b-hero-title" value="${esc(b.hero_title||'')}" placeholder="Твой приватный доступ в сеть" oninput="updatePreview()"></div>
+        <div class="field"><label>Подзаголовок</label><input id="b-hero-sub" value="${esc(b.hero_subtitle||'')}" placeholder="VPN без логов и ограничений скорости" oninput="updatePreview()"></div>
+      </div>
+      <div class="field" style="margin-bottom:0;"><label>Текст подвала</label><input id="b-footer" value="${esc(b.footer_text||'')}" placeholder="© 2026 AWX VPN (пусто = по умолчанию)" oninput="updatePreview()"></div>
       <button class="btn btn-dark" style="margin-top:12px;" onclick="saveBranding()">Сохранить брендинг</button>
     </div>`;
 
@@ -1035,7 +1070,16 @@ async function loadSettings(){
       </div>
     </div>`;
 
-    el.innerHTML = html;
+    // Часть 6: слева редакторы, справа липкое live-превью витрины
+    el.innerHTML = `<div class="settings-layout"><div>${html}</div>
+      <div class="preview-sticky">
+        <div class="chart-card">
+          <div class="chart-title">Предпросмотр витрины</div>
+          <div id="live-preview"></div>
+        </div>
+      </div>
+    </div>`;
+    updatePreview();
   }catch(e){ el.innerHTML = `<p style="color:var(--err);text-align:center;padding:48px;">Ошибка: ${esc(e.message)}</p>`; }
 }
 
@@ -1127,10 +1171,17 @@ function renderTariffEditor(tariffs, availableInbounds){
   const ibs = availableInbounds || [];
   const cards = Object.entries(tariffs).map(([slug, t]) => {
     const selected = (t.inbounds||[]).map(String);
-    const pills = ibs.map(id => {
-      const sel = selected.includes(String(id)) ? 'sel' : '';
-      return `<span class="inb-pill ${sel}" data-val="${id}" onclick="this.classList.toggle('sel')">${id}</span>`;
+    // Часть 6: чекбоксы инбаундов вместо пилюль-кликов
+    const ibCheckboxes = ibs.map(id => {
+      const sel = selected.includes(String(id));
+      return `<label style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 6px 0;font-size:13px;cursor:pointer;">
+        <input type="checkbox" class="t-inb" value="${id}" ${sel?'checked':''} onchange="syncInbAll(this)"> ${id}
+      </label>`;
     }).join('');
+    const allSelected = ibs.length > 0 && ibs.every(id => selected.includes(String(id)));
+    const master = `<label style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 6px 0;font-size:13px;cursor:pointer;font-weight:600;">
+      <input type="checkbox" class="t-inb-all" ${allSelected?'checked':''} onchange="toggleInbAll(this)"> Все доступные
+    </label>`;
     return `
     <div style="border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px;background:var(--surface);box-shadow:0 2px 10px rgba(30,30,20,.04);" class="tariff-card" data-slug="${esc(slug)}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
@@ -1138,17 +1189,22 @@ function renderTariffEditor(tariffs, availableInbounds){
         <button class="btn btn-danger btn-sm" onclick="removeTariff('${esc(slug)}')">✕ Удалить</button>
       </div>
       <div style="display:grid;grid-template-columns:1.5fr .6fr .6fr .5fr .5fr;gap:14px;align-items:end;margin-bottom:12px;">
-        <div class="field" style="margin-bottom:0;"><label>Название</label><input class="t-title" value="${esc(t.title)}" style="width:100%;"></div>
-        <div class="field" style="margin-bottom:0;"><label>Дней</label><input class="t-days" type="number" value="${t.days}" min="1" style="width:100%;"></div>
-        <div class="field" style="margin-bottom:0;"><label>Цена &#8381;</label><input class="t-price" type="number" value="${t.price}" min="1" style="width:100%;"></div>
+        <div class="field" style="margin-bottom:0;"><label>Название</label><input class="t-title" value="${esc(t.title)}" style="width:100%;" oninput="updatePreview()"></div>
+        <div class="field" style="margin-bottom:0;"><label>Дней</label><input class="t-days" type="number" value="${t.days}" min="1" style="width:100%;" oninput="updatePreview()"></div>
+        <div class="field" style="margin-bottom:0;"><label>Цена &#8381;</label><input class="t-price" type="number" value="${t.price}" min="1" style="width:100%;" oninput="updatePreview()"></div>
         <div class="field" style="margin-bottom:0;"><label>Устройств</label><input class="t-devices" type="number" value="${t.devices||5}" min="1" style="width:100%;"></div>
         <div class="field" style="margin-bottom:0;"><label>% скидка</label><input class="t-discount" type="number" value="${t.discount||0}" min="0" max="100" style="width:100%;"></div>
       </div>
+      <div class="form-row" style="margin-bottom:12px;">
+        <div class="field" style="flex:2;margin-bottom:0;"><label>Описание (на карточке витрины)</label><textarea class="t-desc" rows="2" maxlength="200" placeholder="Короткое описание тарифа" style="width:100%;" oninput="updatePreview()">${esc(t.description||'')}</textarea></div>
+        <div class="field" style="flex:1;margin-bottom:0;"><label>Бейдж (чип на карточке)</label><input class="t-badge" maxlength="30" value="${esc(t.badge||'')}" placeholder="Хит / −20%" style="width:100%;" oninput="updatePreview()"></div>
+      </div>
+      <div class="field" style="margin-bottom:12px;"><label>Преимущества (по одному в строке)</label><textarea class="t-features" rows="3" placeholder="Безлимитный трафик&#10;Все серверы" style="width:100%;" oninput="updatePreview()">${esc((t.features||[]).join('\n'))}</textarea></div>
       <div style="display:flex;align-items:flex-start;gap:12px;">
         <div style="font-size:14px;font-weight:600;color:var(--text);margin-top:8px;white-space:nowrap;">Инбаунды:</div>
-        <div class="inb-pills">${pills}</div>
+        <div>${ibs.length ? master + ibCheckboxes : '<span style="color:var(--text-3);font-size:13px;">Нет доступных инбаундов</span>'}</div>
       </div>
-      <div style="font-size:12px;color:var(--text-3);margin-top:6px;margin-left:80px;">Все = клиент создаётся во всех доступных инбаундах.</div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:6px;">Все доступные = клиент создаётся во всех инбаундах (как сейчас).</div>
     </div>
   `}).join('');
   return `<div style="margin-bottom:14px;">
@@ -1161,7 +1217,7 @@ function addTariff(){
   if (!wrap) return;
   const slug = 'new_' + Date.now();
   const ibs = (window.__availableInbounds||[]);
-  const pills = ibs.map(id => `<span class="inb-pill" data-val="${id}" onclick="this.classList.toggle('sel')">${id}</span>`).join('');
+  const ibCbs = ibs.map(id => `<label style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 6px 0;font-size:13px;cursor:pointer;"><input type="checkbox" class="t-inb" value="${id}" onchange="syncInbAll(this)"> ${id}</label>`).join('');
   const card = document.createElement('div');
   card.className = 'tariff-card';
   card.dataset.slug = slug;
@@ -1172,17 +1228,22 @@ function addTariff(){
       <button class="btn btn-danger btn-sm" onclick="this.closest('.tariff-card').remove()">✕ Удалить</button>
     </div>
     <div style="display:grid;grid-template-columns:1.5fr .6fr .6fr .5fr .5fr;gap:14px;align-items:end;margin-bottom:12px;">
-      <div class="field" style="margin-bottom:0;"><label>Название</label><input class="t-title" placeholder="Название тарифа" style="width:100%;"></div>
-      <div class="field" style="margin-bottom:0;"><label>Дней</label><input class="t-days" type="number" value="30" min="1" style="width:100%;"></div>
-      <div class="field" style="margin-bottom:0;"><label>Цена &#8381;</label><input class="t-price" type="number" value="0" min="1" style="width:100%;"></div>
+      <div class="field" style="margin-bottom:0;"><label>Название</label><input class="t-title" placeholder="Название тарифа" style="width:100%;" oninput="updatePreview()"></div>
+      <div class="field" style="margin-bottom:0;"><label>Дней</label><input class="t-days" type="number" value="30" min="1" style="width:100%;" oninput="updatePreview()"></div>
+      <div class="field" style="margin-bottom:0;"><label>Цена &#8381;</label><input class="t-price" type="number" value="0" min="1" style="width:100%;" oninput="updatePreview()"></div>
       <div class="field" style="margin-bottom:0;"><label>Устройств</label><input class="t-devices" type="number" value="5" min="1" style="width:100%;"></div>
       <div class="field" style="margin-bottom:0;"><label>% скидка</label><input class="t-discount" type="number" value="0" min="0" max="100" style="width:100%;"></div>
     </div>
+    <div class="form-row" style="margin-bottom:12px;">
+      <div class="field" style="flex:2;margin-bottom:0;"><label>Описание (на карточке витрины)</label><textarea class="t-desc" rows="2" maxlength="200" placeholder="Короткое описание тарифа" style="width:100%;" oninput="updatePreview()"></textarea></div>
+      <div class="field" style="flex:1;margin-bottom:0;"><label>Бейдж (чип на карточке)</label><input class="t-badge" maxlength="30" placeholder="Хит / −20%" style="width:100%;" oninput="updatePreview()"></div>
+    </div>
+    <div class="field" style="margin-bottom:12px;"><label>Преимущества (по одному в строке)</label><textarea class="t-features" rows="3" placeholder="Безлимитный трафик&#10;Все серверы" style="width:100%;" oninput="updatePreview()"></textarea></div>
     <div style="display:flex;align-items:flex-start;gap:12px;">
       <div style="font-size:14px;font-weight:600;color:var(--text);margin-top:8px;white-space:nowrap;">Инбаунды:</div>
-      <div class="inb-pills">${pills}</div>
+      <div>${ibs.length ? '<label style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 6px 0;font-size:13px;cursor:pointer;font-weight:600;"><input type="checkbox" class="t-inb-all" onchange="toggleInbAll(this)"> Все доступные</label>' + ibCbs : '<span style="color:var(--text-3);font-size:13px;">Нет доступных инбаундов</span>'}</div>
     </div>
-    <div style="font-size:12px;color:var(--text-3);margin-top:6px;margin-left:80px;">Все = клиент создаётся во всех доступных инбаундах.</div>
+    <div style="font-size:12px;color:var(--text-3);margin-top:6px;">Все доступные = клиент создаётся во всех инбаундах (как сейчас).</div>
   `;
   const firstCard = wrap.querySelector('.tariff-card');
   if (firstCard) firstCard.parentElement.insertBefore(card, firstCard);
@@ -1194,25 +1255,44 @@ function removeTariff(slug){
   if (card) card.remove();
 }
 
+// Чекбоксы: мастер «Все» → toggle всех; индивидуальный → обновить мастера
+function toggleInbAll(master){
+  master.closest('.tariff-card').querySelectorAll('.t-inb').forEach(cb => cb.checked = master.checked);
+  updatePreview();
+}
+function syncInbAll(cb){
+  const card = cb.closest('.tariff-card');
+  if (!card) return;
+  const all = card.querySelectorAll('.t-inb');
+  const master = card.querySelector('.t-inb-all');
+  if (master && all.length) master.checked = Array.from(all).every(c => c.checked);
+  updatePreview();
+}
+
 async function saveTariffs(){
   const rows = document.querySelectorAll('.tariff-card');
   const tariffs = {};
+  const ibs = window.__availableInbounds || [];
   rows.forEach(r => {
     const slug = r.querySelector('.t-slug')?.value?.trim() || r.dataset.slug;
     if (!slug) return;
-    const inb = Array.from(r.querySelectorAll('.inb-pill.sel')).map(p => parseInt(p.dataset.val));
+    const checkedInbs = Array.from(r.querySelectorAll('.t-inb:checked')).map(cb => parseInt(cb.value));
     tariffs[slug] = {
       title: r.querySelector('.t-title')?.value || slug,
       days: parseInt(r.querySelector('.t-days')?.value)||30,
       price: parseFloat(r.querySelector('.t-price')?.value)||0,
       devices: parseInt(r.querySelector('.t-devices')?.value)||5,
       discount: parseInt(r.querySelector('.t-discount')?.value)||0,
-      inbounds: inb,
+      inbounds: checkedInbs.length === ibs.length ? [] : checkedInbs,
+      description: r.querySelector('.t-desc')?.value || '',
+      features: (r.querySelector('.t-features')?.value || '').split('\n').map(s => s.trim()).filter(Boolean),
+      badge: r.querySelector('.t-badge')?.value || '',
     };
   });
   try{
     await api('/admin/settings/tariffs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tariffs})});
     toast('Тарифы сохранены');
+    updatePreview();
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
@@ -1220,9 +1300,19 @@ async function saveTariffs(){
 function renderGroupEditor(groups, tariffs, availableInbounds){
   const entries = groups && Object.keys(groups).length ? Object.entries(groups) : [];
   if(!entries.length) return '<p style="color:var(--text-3);">Нет групп — тарифы показываются плоским списком.</p>';
-  const inboundOpts = (availableInbounds||[]).map(i => `<option value="${i}">${i}</option>`).join('');
-  const tariffOpts = (tariffs ? Object.keys(tariffs) : []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-  return entries.map(([gid, g]) => `
+  const ibs = availableInbounds || [];
+  const tariffSlugs = tariffs ? Object.keys(tariffs) : [];
+  return entries.map(([gid, g]) => {
+    // Часть 6: чекбоксы вместо <select multiple>
+    const ibCbs = ibs.map(id => {
+      const sel = (g.inbounds||[]).includes(parseInt(id));
+      return `<label style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 6px 0;font-size:12.5px;cursor:pointer;"><input type="checkbox" class="g-inb" value="${id}" ${sel?'checked':''}> ${id}</label>`;
+    }).join('');
+    const tCbs = tariffSlugs.map(s => {
+      const sel = (g.tariffs||[]).includes(s);
+      return `<label style="display:block;font-size:12.5px;cursor:pointer;padding:2px 0;"><input type="checkbox" class="g-tariff" value="${esc(s)}" ${sel?'checked':''}> ${esc(s)}</label>`;
+    }).join('');
+    return `
     <div class="group-row" data-gid="${esc(gid)}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;">
       <div class="form-row">
         <div class="field" style="flex:1;"><label>ID группы</label><input class="g-id" value="${esc(gid)}"></div>
@@ -1231,19 +1321,16 @@ function renderGroupEditor(groups, tariffs, availableInbounds){
       <div class="field"><label>Описание</label><input class="g-desc" value="${esc(g.description||'')}"></div>
       <div class="form-row">
         <div class="field" style="flex:1;"><label>Инбаунды (пусто = все доступные)</label>
-          <select multiple class="g-inbounds" style="width:100%;height:70px;">
-            ${inboundOpts.replace(/<option value="(\d+)">/g, (m,i) => `<option value="${i}" ${(g.inbounds||[]).includes(parseInt(i))?'selected':''}>${i}</option>`)}
-          </select>
+          <div>${ibCbs || '<span style="color:var(--text-3);font-size:12px;">Нет инбаундов</span>'}</div>
         </div>
         <div class="field" style="flex:1.5;"><label>Тарифы группы</label>
-          <select multiple class="g-tariffs" style="width:100%;height:70px;">
-            ${tariffOpts.replace(/<option value="([^"]+)">/g, (m,s) => `<option value="${s}" ${(g.tariffs||[]).includes(s)?'selected':''}>${s}</option>`)}
-          </select>
+          <div style="max-height:110px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px;">${tCbs || '<span style="color:var(--text-3);font-size:12px;">Нет тарифов</span>'}</div>
         </div>
       </div>
       <button class="btn btn-danger btn-sm" onclick="removeGroupRow(this)">Удалить группу</button>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function addGroupRow(){
@@ -1255,8 +1342,9 @@ function addGroupRow(){
   div.className = 'group-row';
   div.dataset.gid = 'new_group';
   div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;';
-  const inboundOpts = (window.__availableInbounds || []).map(i => `<option value="${i}">${i}</option>`).join('');
-  const tariffOpts = (window.__adminTariffSlugs || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  const ibs = window.__availableInbounds || [];
+  const ibCbs = ibs.map(i => `<label style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 6px 0;font-size:12.5px;cursor:pointer;"><input type="checkbox" class="g-inb" value="${i}"> ${i}</label>`).join('');
+  const tCbs = (window.__adminTariffSlugs || []).map(s => `<label style="display:block;font-size:12.5px;cursor:pointer;padding:2px 0;"><input type="checkbox" class="g-tariff" value="${esc(s)}"> ${esc(s)}</label>`).join('');
   div.innerHTML = `
     <div class="form-row">
       <div class="field" style="flex:1;"><label>ID группы</label><input class="g-id" value=""></div>
@@ -1264,8 +1352,8 @@ function addGroupRow(){
     </div>
     <div class="field"><label>Описание</label><input class="g-desc" value=""></div>
     <div class="form-row">
-      <div class="field" style="flex:1;"><label>Инбаунды</label><select multiple class="g-inbounds" style="width:100%;height:70px;">${inboundOpts}</select></div>
-      <div class="field" style="flex:1.5;"><label>Тарифы группы</label><select multiple class="g-tariffs" style="width:100%;height:70px;">${tariffOpts}</select></div>
+      <div class="field" style="flex:1;"><label>Инбаунды</label><div>${ibCbs || '<span style="color:var(--text-3);font-size:12px;">Нет инбаундов</span>'}</div></div>
+      <div class="field" style="flex:1.5;"><label>Тарифы группы</label><div style="max-height:110px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px;">${tCbs || '<span style="color:var(--text-3);font-size:12px;">Нет тарифов</span>'}</div></div>
     </div>
     <button class="btn btn-danger btn-sm" onclick="removeGroupRow(this)">Удалить группу</button>`;
   wrap.appendChild(div);
@@ -1288,8 +1376,8 @@ async function saveTariffGroups(){
       id: id,
       title: title,
       description: r.querySelector('.g-desc').value.trim(),
-      inbounds: Array.from(r.querySelectorAll('.g-inbounds option:checked')).map(o => parseInt(o.value)),
-      tariffs: Array.from(r.querySelectorAll('.g-tariffs option:checked')).map(o => o.value),
+      inbounds: Array.from(r.querySelectorAll('.g-inb:checked')).map(cb => parseInt(cb.value)),
+      tariffs: Array.from(r.querySelectorAll('.g-tariff:checked')).map(cb => cb.value),
     };
   });
   if(!ok){ toast('Заполните ID и название для всех групп', 'error'); return; }
@@ -1312,16 +1400,95 @@ async function savePayment(){
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
+// ====== ЧАСТЬ 6: ЛОГОТИП И PREVIEW ======
+
+function brandLogoFromFile(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  if (file.size > 320 * 1024) { toast('Логотип слишком большой (>300 КБ)', 'error'); ev.target.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    window.__brandLogo = reader.result;
+    const preview = document.getElementById('b-logo-preview');
+    if (preview) { preview.src = reader.result; preview.style.display = ''; }
+    const clear = document.getElementById('b-logo-clear');
+    if (clear) clear.style.display = '';
+    updatePreview();
+  };
+  reader.readAsDataURL(file);
+}
+
+function brandLogoClear(){
+  window.__brandLogo = '';
+  const preview = document.getElementById('b-logo-preview');
+  if (preview) { preview.src = ''; preview.style.display = 'none'; }
+  const clear = document.getElementById('b-logo-clear');
+  if (clear) clear.style.display = 'none';
+  updatePreview();
+}
+
+// Live-превью витрины (обновляется при вводе в редакторы брендинга/тарифов)
+function updatePreview(){
+  const el = document.getElementById('live-preview');
+  if (!el) return;
+  const name = (document.getElementById('b-name')||{}).value || 'AWX VPN';
+  const color = (document.getElementById('b-accent')||{}).value || '#1F5F52';
+  const logo = window.__brandLogo || '';
+  const heroTitle = (document.getElementById('b-hero-title')||{}).value || 'Твой приватный доступ в сеть';
+  const heroSub = (document.getElementById('b-hero-sub')||{}).value || 'VPN без логов и ограничений скорости';
+
+  // Первый тариф из карточек
+  const card = document.querySelector('.tariff-card');
+  let tariffHtml = '';
+  if (card) {
+    const tTitle = card.querySelector('.t-title')?.value || 'Тариф';
+    const tPrice = card.querySelector('.t-price')?.value || '0';
+    const tDays = card.querySelector('.t-days')?.value || '30';
+    const tDesc = card.querySelector('.t-desc')?.value || '';
+    const tBadge = card.querySelector('.t-badge')?.value || '';
+    const tFeatsRaw = (card.querySelector('.t-features')?.value || '').split('\n').filter(f => f.trim());
+    const featsHtml = tFeatsRaw.length
+      ? tFeatsRaw.slice(0,4).map(f => `<li>✓ ${esc(f.trim())}</li>`).join('')
+      : '<li>✓ Безлимитный трафик</li><li>✓ Все серверы</li>';
+    tariffHtml = `<div class="pv-card">
+      ${tBadge ? `<div class="pv-badge">${esc(tBadge)}</div>` : ''}
+      <h5>${esc(tTitle)}</h5>
+      ${tDesc ? `<p class="pv-desc">${esc(tDesc)}</p>` : ''}
+      <div class="pv-price" style="color:${color}">${tPrice} ₽</div>
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;">за ${tDays} дней</div>
+      <ul class="pv-feats">${featsHtml}</ul>
+    </div>`;
+  }
+
+  el.innerHTML = `<div class="preview-mini">
+    <div class="pv-head">
+      ${logo ? `<img class="pv-logo" src="${logo}" alt="лого">` : '<span class="pv-logo" style="background:var(--border);width:22px;display:block;border-radius:4px;"></span>'}
+      <div class="pv-name">${esc(name)}</div>
+    </div>
+    <div class="pv-hero">
+      <h4>${esc(heroTitle)}</h4>
+      <p>${esc(heroSub)}</p>
+    </div>
+    ${tariffHtml}
+  </div>`;
+}
+
 async function saveBranding(){
   const body = {
-    site_name: document.getElementById('b-name').value.trim(),
-    accent_color: document.getElementById('b-accent').value,
-    support_contact: document.getElementById('b-support').value.trim()
+    site_name: (document.getElementById('b-name')||{}).value || '',
+    accent_color: (document.getElementById('b-accent')||{}).value || '#1F5F52',
+    support_contact: (document.getElementById('b-support')||{}).value || '',
+    logo_data_url: window.__brandLogo || '',
+    hero_title: (document.getElementById('b-hero-title')||{}).value || '',
+    hero_subtitle: (document.getElementById('b-hero-sub')||{}).value || '',
+    site_description: (document.getElementById('b-desc')||{}).value || '',
+    footer_text: (document.getElementById('b-footer')||{}).value || '',
   };
-  if(!body.site_name){ toast('Введите название сайта', 'error'); return; }
+  if(!body.site_name.trim()){ toast('Введите название сайта', 'error'); return; }
   try{
     await api('/admin/settings/branding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     toast('Брендинг сохранён');
+    updatePreview();
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 

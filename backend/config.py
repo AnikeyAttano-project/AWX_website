@@ -96,12 +96,19 @@ class Settings(BaseSettings):
     # Пусто = витрина плоская. inbounds группы применяются, если у тарифа своих нет.
     tariff_groups: dict = {}
 
-    # Брендинг: название сайта, акцентный цвет, контакт поддержки.
+    # Брендинг: название сайта, акцентный цвет, контакт поддержки, логотип
+    # (base64 data-URL), hero-тексты, meta-описание, текст подвала.
     # Редактируется в админке (Настройки → Брендинг), применяется на витрине и в ЛК.
+    # Пустые строки = витрина использует дефолтные значения из HTML.
     branding: dict = {
         "site_name": "AWX VPN",
         "accent_color": "#1F5F52",
         "support_contact": "support@awxvpn.com",
+        "logo_data_url": "",
+        "hero_title": "",
+        "hero_subtitle": "",
+        "site_description": "",
+        "footer_text": "",
     }
 
     # Add-on пакеты: покупка доп. устройств с пропорциональной оплатой (proration)

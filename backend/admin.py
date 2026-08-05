@@ -80,6 +80,10 @@ class TariffItem(BaseModel):
     devices: int = Field(ge=1, default=5)
     discount: int = Field(ge=0, le=100, default=0)
     inbounds: list[int] = Field(default_factory=list)
+    # Контент для витрины (Часть 6): описание, преимущества буллетами, бейдж-чип
+    description: str = ""
+    features: list[str] = Field(default_factory=list)
+    badge: str = ""
 
 
 class TariffUpdateRequest(BaseModel):
@@ -111,6 +115,12 @@ class BrandingRequest(BaseModel):
     site_name: str = Field(min_length=1, max_length=60)
     accent_color: str = Field(default="#1F5F52")
     support_contact: str = Field(default="", max_length=120)
+    # Часть 6: логотип (base64 data-URL) + тексты витрины
+    logo_data_url: str = Field(default="", max_length=400_000)
+    hero_title: str = Field(default="", max_length=120)
+    hero_subtitle: str = Field(default="", max_length=200)
+    site_description: str = Field(default="", max_length=300)
+    footer_text: str = Field(default="", max_length=200)
 
 
 class InboundsRequest(BaseModel):
@@ -130,6 +140,20 @@ def _validate_accent_color(color: str) -> None:
     import re
     if color and not re.match(_ACCENT_RE, color.strip()):
         raise HTTPException(400, "accent_color должен быть HEX-цветом вида #RRGGBB")
+
+
+def _validate_logo(data_url: str) -> None:
+    """Логотип — base64 data-URL картинки, ≤300 КБ. Пусто = логотип убран."""
+    if not data_url:
+        return
+    if len(data_url) > 300 * 1024:
+        raise HTTPException(400, "Логотип слишком большой (>300 КБ)")
+    if not data_url.startswith("data:image/"):
+        raise HTTPException(400, "Логотип должен быть картинкой (data:image/...)")
+    mime = data_url.split(";", 1)[0].lower()
+    allowed = {"data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/svg+xml"}
+    if mime not in allowed:
+        raise HTTPException(400, "Поддерживаются только PNG, JPEG, SVG")
 
 
 class TrialSettingsRequest(BaseModel):
@@ -655,6 +679,14 @@ async def update_tariffs(req: TariffUpdateRequest):
 
     for slug, t in req.tariffs.items():
         _validate_inbounds(t.inbounds)
+        if len(t.description) > 200:
+            raise HTTPException(400, f"Тариф '{slug}': описание не длиннее 200 символов")
+        if len(t.features) > 10:
+            raise HTTPException(400, f"Тариф '{slug}': не более 10 преимуществ")
+        if any(len(f) > 80 for f in t.features):
+            raise HTTPException(400, f"Тариф '{slug}': преимущество не длиннее 80 символов")
+        if len(t.badge) > 30:
+            raise HTTPException(400, f"Тариф '{slug}': бейдж не длиннее 30 символов")
 
     tariffs_dict = {slug: tariff.model_dump() for slug, tariff in req.tariffs.items()}
     settings.tariffs = tariffs_dict
@@ -686,10 +718,16 @@ async def update_branding(req: BrandingRequest):
     if not req.site_name.strip():
         raise HTTPException(400, "site_name не может быть пустым")
     _validate_accent_color(req.accent_color)
+    _validate_logo(req.logo_data_url)
     branding = {
         "site_name": req.site_name.strip(),
         "accent_color": req.accent_color.strip(),
         "support_contact": req.support_contact.strip(),
+        "logo_data_url": req.logo_data_url.strip(),
+        "hero_title": req.hero_title.strip(),
+        "hero_subtitle": req.hero_subtitle.strip(),
+        "site_description": req.site_description.strip(),
+        "footer_text": req.footer_text.strip(),
     }
     settings.branding = branding
     await save_settings_value("branding", branding)

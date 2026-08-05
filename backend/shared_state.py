@@ -297,6 +297,10 @@ def _tariff_payload(slug: str, t: dict) -> dict:
         "inbounds": effective_inbounds(slug),
         "group": group_id,
         "addons": addons,
+        # Часть 6: контент витрины
+        "description": t.get("description", ""),
+        "features": t.get("features", []) or [],
+        "badge": t.get("badge", ""),
     }
 
 

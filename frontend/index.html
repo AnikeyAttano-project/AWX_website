@@ -132,6 +132,12 @@
     padding:4px 12px;border-radius:20px;letter-spacing:.03em;
   }
   .tariff-name{font-size:18px;font-weight:700;margin-bottom:8px;}
+  .tariff-desc{font-size:13px;color:var(--text-2);line-height:1.5;margin:0 0 14px;}
+  .tariff-custom-badge{
+    position:absolute;top:12px;right:12px;z-index:2;
+    background:#dc2626;color:#fff;font-size:11px;font-weight:700;
+    padding:3px 10px;border-radius:20px;
+  }
   .tariff-price{font-size:36px;font-weight:700;color:var(--accent);margin-bottom:4px;}
   .tariff-period{font-size:13px;color:var(--text-3);margin-bottom:24px;}
   .tariff-features{text-align:left;margin-bottom:28px;}
@@ -231,8 +237,8 @@
     <div class="hero-icon">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 5v6c0 5.2 3.4 9.4 8 11 4.6-1.6 8-5.8 8-11V5l-8-3z" stroke="#191815" stroke-width="1.6" stroke-linejoin="round"/></svg>
     </div>
-    <h1>Твой <span class="accent-word">приватный</span> доступ в сеть</h1>
-    <p class="hero-sub">VPN без логов и ограничений скорости</p>
+    <h1 id="hero-title">Твой <span class="accent-word">приватный</span> доступ в сеть</h1>
+    <p class="hero-sub" id="hero-sub">VPN без логов и ограничений скорости</p>
     <div class="hero-ctas">
       <a href="#tariffs" class="btn btn-dark btn-lg">Подключить VPN</a>
       <a href="#features" class="btn btn-glass btn-lg">Как это работает</a>
@@ -411,19 +417,25 @@ async function loadTariffs() {
       const discount = fullPrice ? Math.round((1 - t.price / fullPrice) * 100) : 0;
       const isPopular = idx === 1;
       const dayWord = t.days % 10 === 1 && t.days % 100 !== 11 ? 'день' : (t.days % 10 >= 2 && t.days % 10 <= 4 && (t.days % 100 < 10 || t.days % 100 >= 20) ? 'дня' : 'дней');
+      // Часть 6: контент тарифа из админки (описание, бейдж, преимущества)
+      const checkSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      const desc = t.description ? `<p class="tariff-desc">${escHtml(t.description)}</p>` : '';
+      const customBadge = t.badge ? `<div class="tariff-custom-badge">${escHtml(t.badge)}</div>` : '';
+      const defaultFeatures = ['Безлимитный трафик', (t.devices || 5) + ' устройств', 'Все серверы', 'Игровой режим'];
+      const featItems = (t.features && t.features.length) ? t.features : defaultFeatures;
+      const featuresHtml = featItems.map(f => `<li>${checkSvg}${escHtml(f)}</li>`).join('');
 
       return `
       <div class="tariff ${isPopular ? 'popular' : ''}">
         ${isPopular ? '<div class="tariff-badge">ПОПУЛЯРНЫЙ</div>' : ''}
+        ${customBadge}
         ${discount >= 5 ? `<div style="position:absolute;top:12px;right:12px;background:#dc2626;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:12px;">-${discount}%</div>` : ''}
         <div class="tariff-name">${planName(t.slug, t.title)}</div>
+        ${desc}
         <div class="tariff-price">${t.price} ₽</div>
         <div class="tariff-period">за ${t.days} ${dayWord}</div>
         <ul class="tariff-features">
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Безлимитный трафик</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>${t.devices || 5} устройств</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Все серверы</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Игровой режим</li>
+          ${featuresHtml}
         </ul>
         <button onclick="buyTariff('${t.slug}','${planName(t.slug,t.title)}',${t.price},${t.days})" class="btn ${isPopular ? 'btn-dark' : 'btn-outline'}" style="width:100%;padding:12px;border-radius:8px;">
           Подключить
@@ -788,7 +800,7 @@ function applyBranding(b) {
   const hero = document.querySelector('.brand-hero');
   if (hero) hero.textContent = hero.textContent.replace(/AWX VPN/, name);
   const copy = document.getElementById('footer-copy');
-  if (copy) copy.textContent = '© ' + (new Date().getFullYear()) + ' ' + name;
+  if (copy) copy.textContent = b.footer_text ? b.footer_text : ('© ' + (new Date().getFullYear()) + ' ' + name);
   const support = document.getElementById('support-link');
   if (support && b.support_contact) {
     support.href = /^[^@]+@[^@]+$/.test(b.support_contact) ? 'mailto:' + b.support_contact : b.support_contact;
@@ -797,6 +809,26 @@ function applyBranding(b) {
   if (b.accent_color) {
     document.documentElement.style.setProperty('--accent', b.accent_color);
     document.documentElement.style.setProperty('--accent-bg', hexToRgba(b.accent_color, 0.10));
+  }
+  // Часть 6: логотип, hero-тексты, meta description
+  if (b.logo_data_url) {
+    document.querySelectorAll('.logo-mark').forEach(el => {
+      if (el.tagName === 'IMG') { el.src = b.logo_data_url; return; }
+      const img = document.createElement('img');
+      img.className = 'logo-mark';
+      img.src = b.logo_data_url;
+      img.alt = name;
+      img.style.cssText = 'width:22px;height:22px;object-fit:contain;';
+      el.replaceWith(img);
+    });
+  }
+  const heroTitle = document.getElementById('hero-title');
+  if (heroTitle && b.hero_title) heroTitle.textContent = b.hero_title;
+  const heroSub = document.getElementById('hero-sub');
+  if (heroSub && b.hero_subtitle) heroSub.textContent = b.hero_subtitle;
+  if (b.site_description) {
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.content = b.site_description;
   }
 }
 

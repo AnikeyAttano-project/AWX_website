@@ -1688,6 +1688,18 @@ function applyBranding(b) {
     document.documentElement.style.setProperty('--accent', b.accent_color);
     document.documentElement.style.setProperty('--accent-bg', hexToRgba(b.accent_color, 0.10));
   }
+  // Часть 6: логотип из админки
+  if (b.logo_data_url) {
+    document.querySelectorAll('.logo-mark').forEach(el => {
+      if (el.tagName === 'IMG') { el.src = b.logo_data_url; return; }
+      const img = document.createElement('img');
+      img.className = 'logo-mark';
+      img.src = b.logo_data_url;
+      img.alt = name;
+      img.style.cssText = 'width:22px;height:22px;object-fit:contain;';
+      el.replaceWith(img);
+    });
+  }
 }
 
 function hexToRgba(hex, alpha) {
