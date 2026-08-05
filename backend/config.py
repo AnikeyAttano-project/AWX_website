@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # Email verification (false = auto-verified at registration)
     email_verification_required: bool = False
 
+    # Telegram Login Widget (авторизация через Telegram).
+    # token — для криптографической проверки подписи виджета (@BotFather).
+    # username — публичное имя бота, фронт по нему рендерит кнопку «Войти через Telegram».
+    # Домен должен быть привязан в @BotFather (/setdomain), напр. awx-vpn.duckdns.org.
+    telegram_bot_token: str = ""
+    telegram_bot_username: str = ""
+
     # Trial subscription
     trial_enabled: bool = True
     trial_days: int = 3

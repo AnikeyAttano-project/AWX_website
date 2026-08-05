@@ -336,6 +336,12 @@
             </div>
             <div id="login-error" class="form-error hidden"></div>
             <button type="submit" id="login-btn" class="btn btn-dark btn-block">Войти</button>
+
+            <div style="display:flex;align-items:center;gap:12px;color:var(--text-3,#9A968D);font-size:13px;margin:14px 0 12px;">
+              <span style="flex:1;height:1px;background:var(--border,#E7E5E0);"></span>или<span style="flex:1;height:1px;background:var(--border,#E7E5E0);"></span>
+            </div>
+            <div id="telegram-login-box" style="display:flex;justify-content:center;"></div>
+
             <p class="form-switch">
               Нет аккаунта?
               <a href="#" onclick="showAuthForm('register'); return false;">Зарегистрироваться</a>
@@ -380,6 +386,7 @@
           <p class="dash-sub">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M22 7l-10 7L2 7" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
             <span id="user-email"></span>
+            <span id="tg-bind-area"></span>
           </p>
         </div>
         <div class="dash-actions">
@@ -515,10 +522,26 @@
   </div>
 </div>
 
+<!-- Модалка привязки Telegram -->
+<div id="tg-bind-modal" class="modal-overlay" onclick="if(event.target===this)closeTelegramBindModal()">
+  <div class="modal">
+    <button class="modal-close" onclick="closeTelegramBindModal()">×</button>
+    <div class="key-head">
+      <h4 class="key-title">Привязать Telegram</h4>
+      <p class="key-sub">Войдите через Telegram, чтобы привязать его к аккаунту. Вход по email будет работать как раньше.</p>
+    </div>
+    <div id="tg-bind-box" style="display:flex;justify-content:center;margin-top:16px;"></div>
+    <div id="tg-bind-error" class="form-error hidden"></div>
+  </div>
+</div>
+
 <style>
   .addon-option{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid var(--border,#e5e5e5);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:border-color .15s;}
   .addon-option:has(input:checked){border-color:var(--accent,#1F5F52);background:var(--accent-bg,#EAF1EE);}
   .addon-option input[type="radio"]{accent-color:var(--accent,#1F5F52);width:18px;height:18px;}
+  .tg-bind-link{background:none;border:none;cursor:pointer;color:var(--accent,#1F5F52);font-size:13px;font-weight:600;padding:0 0 0 6px;}
+  .tg-bind-link:hover{text-decoration:underline;}
+  .tg-bind-status{font-size:13px;color:var(--text-2,#5A564F);font-weight:600;}
 </style>
 
 <script>
@@ -849,6 +872,7 @@ async function enterDashboard() {
   try {
     const me = await apiFetch('/api/auth/me');
     if (me && me.email) document.getElementById('user-email').textContent = me.email;
+    updateTelegramBindStatus(me && me.telegram_id);
   } catch (e) {
     if (e.status === 401) {
       clearToken();
@@ -1538,6 +1562,7 @@ document.addEventListener('keydown', (e) => {
     closeStatsModal();
     closeRenameModal();
     closeAddonModal();
+    closeTelegramBindModal();
   }
 });
 
@@ -1547,9 +1572,94 @@ window.addEventListener('scroll', () => {
   header.classList.toggle('solid', window.scrollY > 40);
 });
 
+// ————————————————— ВХОД ЧЕРЕЗ TELEGRAM —————————————————
+
+function injectTelegramWidget(containerId, username) {
+  const box = document.getElementById(containerId);
+  if (!box || box.dataset.tgLoaded) return;
+  box.dataset.tgLoaded = '1';
+  const s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://telegram.org/js/telegram-widget.js?22';
+  s.setAttribute('data-telegram-login', username);
+  s.setAttribute('data-size', 'large');
+  s.setAttribute('data-radius', '8');
+  s.setAttribute('data-onauth', 'onTelegramAuth(user)');
+  box.appendChild(s);
+}
+
+async function initTelegramWidget() {
+  try {
+    const cfg = await apiFetch('/api/config');
+    if (!cfg || !cfg.telegram_bot_username) return;
+    injectTelegramWidget('telegram-login-box', cfg.telegram_bot_username);
+  } catch (e) { /* Telegram-вход недоступен — просто не показываем кнопку */ }
+}
+
+// Колбэк виджета. Вход (auth-section) или привязка (модалка в ЛК, window._tgBind).
+async function onTelegramAuth(user) {
+  if (!user || !user.id || !user.hash) return;
+  try {
+    if (window._tgBind) {
+      window._tgBind = false;
+      const data = await apiFetch('/api/auth/telegram/bind', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(user)
+      });
+      closeTelegramBindModal();
+      updateTelegramBindStatus(data.telegram_id);
+      showToast('Telegram привязан');
+    } else {
+      const data = await apiFetch('/api/auth/telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(user)
+      });
+      setToken(data.token);
+      await enterDashboard();
+      showToast('Вход выполнен');
+    }
+  } catch (err) {
+    window._tgBind = false;
+    showToast(err.message, 'error');
+  }
+}
+
+function updateTelegramBindStatus(telegramId) {
+  const area = document.getElementById('tg-bind-area');
+  if (!area) return;
+  if (telegramId) {
+    area.innerHTML = '<span class="tg-bind-status">· 🔗 Telegram привязан</span>';
+  } else {
+    area.innerHTML = '<button class="tg-bind-link" onclick="openTelegramBindModal()">· Привязать Telegram</button>';
+  }
+}
+
+async function openTelegramBindModal() {
+  const modal = document.getElementById('tg-bind-modal');
+  if (!modal) return;
+  modal.classList.add('active');
+  document.getElementById('tg-bind-error').classList.add('hidden');
+  window._tgBind = true;
+  try {
+    const cfg = await apiFetch('/api/config');
+    if (cfg && cfg.telegram_bot_username) {
+      injectTelegramWidget('tg-bind-box', cfg.telegram_bot_username);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function closeTelegramBindModal() {
+  const modal = document.getElementById('tg-bind-modal');
+  if (modal) modal.classList.remove('active');
+  window._tgBind = false;
+}
+
 // ————————————————— ИНИЦИАЛИЗАЦИЯ —————————————————
 
 async function init() {
+  initTelegramWidget();
   if (getToken()) {
     await enterDashboard();
     // Автоприменение реферального кода для уже авторизованных пользователей

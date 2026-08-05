@@ -1,5 +1,7 @@
 import json
 import random
+import uuid
+
 import aiosqlite
 from contextlib import asynccontextmanager
 from config import settings
@@ -472,6 +474,56 @@ async def create_user(
 async def set_user_verified(user_id: str):
     async with _db() as db:
         await db.execute("UPDATE users SET verified = 1 WHERE id = ?", (user_id,))
+        await db.commit()
+
+
+# ————————————————— TELEGRAM LOGIN —————————————————
+
+async def get_user_by_telegram(telegram_id) -> dict | None:
+    """Находит пользователя по telegram_id (для входа через Telegram)."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM users WHERE telegram_id = ?", (str(telegram_id),)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def create_telegram_user(user_id: str, telegram_id) -> str:
+    """Создаёт пользователя, вошедшего через Telegram.
+
+    Email генерируется как ``tg_{telegram_id}@t.me`` (уникальный), password_hash —
+    случайная заглушка (вход по паролю для такого юзера невозможен), verified=1.
+    Возвращает email. Коллизию email нужно проверять ДО вызова (route).
+    """
+    email = f"tg_{telegram_id}@t.me"
+    password_hash = "!telegram:" + uuid.uuid4().hex
+    code = generate_referral_code()
+    async with _db() as db:
+        for _ in range(30):
+            cur = await db.execute(
+                "SELECT 1 FROM users WHERE referral_code = ?", (code,)
+            )
+            if not await cur.fetchone():
+                break
+            code = generate_referral_code()
+        await db.execute(
+            "INSERT INTO users (id, email, password_hash, telegram_id, verified, referral_code) "
+            "VALUES (?, ?, ?, ?, 1, ?)",
+            (user_id, email, password_hash, str(telegram_id), code),
+        )
+        await db.commit()
+    return email
+
+
+async def set_user_telegram(user_id: str, telegram_id) -> None:
+    """Привязывает telegram_id к существующему пользователю (OAuth-привязка в ЛК)."""
+    async with _db() as db:
+        await db.execute(
+            "UPDATE users SET telegram_id = ? WHERE id = ?",
+            (str(telegram_id), user_id),
+        )
         await db.commit()
 
 

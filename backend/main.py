@@ -945,9 +945,13 @@ async def list_tariffs():
 
 @app.get("/api/config")
 async def api_config():
-    """Публичная конфигурация витрины. demo_mode=true → показать кнопку «Демо подписка»."""
+    """Публичная конфигурация витрины. demo_mode=true → показать кнопку «Демо подписка».
+
+    telegram_bot_username — если задан, фронт рендерит кнопку «Войти через Telegram».
+    """
     return {
         "demo_mode": settings.demo_mode,
+        "telegram_bot_username": settings.telegram_bot_username,
     }
 
 
