@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     platega_merchant_id: str
     platega_secret: str
     platega_api_url: str = "https://app.platega.io"
+    # Активная платёжка: 'platega' | 'yookassa'. Меняется в админке
+    # (Настройки → Платёжная система), перекрывается из таблицы settings.
+    payment_provider: str = "platega"
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
 
     # Site
     site_base_url: str  # https://your-domain.com (БЕЗ слэша)

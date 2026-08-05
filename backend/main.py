@@ -40,7 +40,7 @@ from database import (
     validate_promo_code, compute_promo_discount, use_promo_code,
     get_promo_code,
 )
-from platega_client import create_payment, check_status, PlategaError
+from payment_providers import get_provider, get_active_provider, PaymentError
 from pricing import compute_addon_proration
 from xui_client import (
     create_client, get_subscription_url, _parse_inbound_ids,
@@ -97,21 +97,6 @@ def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) 
     # Записываем новый запрос
     rate_limit_storage[ip].append(now)
     return True
-
-
-def verify_platega_webhook(headers: dict) -> bool:
-    """
-    Проверяет webhook от Platega через заголовки X-MerchantId + X-Secret.
-    Platega использует те же заголовки что и для API запросов.
-    """
-    if not settings.platega_secret:
-        logger.error("PLATEGA_SECRET not set — webhook rejected")
-        return False
-
-    merchant_id = headers.get("x-merchantid", "")
-    secret = headers.get("x-secret", "")
-    return (merchant_id == settings.platega_merchant_id and
-            secret == settings.platega_secret)
 
 
 async def cleanup_expired_subscriptions():
@@ -696,19 +681,20 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
                            details=f"order={order_id} addon={addon_id} type={req.addon_type} price=0")
         return {"ok": True, "addon_id": addon_id, "price_now": 0}
 
+    provider = get_active_provider()
     try:
-        payment = await create_payment(amount=price_now, order_id=addon_id,
-                                       description=f"Доп. устройства {addon_cfg['title']} ({round(remaining)} дн.)",
-                                       capability_token=uuid.uuid4().hex)
-    except PlategaError as e:
+        payment = await provider.create_payment(amount=price_now, order_id=addon_id,
+                                                description=f"Доп. устройства {addon_cfg['title']} ({round(remaining)} дн.)",
+                                                capability_token=uuid.uuid4().hex)
+    except PaymentError as e:
         raise HTTPException(502, str(e))
 
-    # Баг1: НЕ вызываем save_platega_tx — addon_id не существует в orders,
-    # иначе webhook подхватит фантомный заказ и вызовет fulfill_order.
-    # tx_id хранится в device_addons.platega_tx_id (через create_device_addon).
+    # tx_id хранится в device_addons.platega_tx_id (через create_device_addon),
+    # чтобы webhook не подхватил фантомный заказ.
     await create_device_addon(addon_id, user["id"], order_id, req.addon_type,
                               addon_cfg["extra_devices"], price_now,
-                              order.get("expires_at", ""), payment["transaction_id"])
+                              order.get("expires_at", ""), payment["transaction_id"],
+                              provider=provider.name)
 
     await add_site_log("addon_purchase", actor=user["id"],
                        details=f"order={order_id} addon={addon_id} type={req.addon_type} price={price_now}")
@@ -759,12 +745,13 @@ async def addon_status(addon_id: str, user: dict = Depends(get_optional_user)):
     # Если pending — проверяем статус оплаты, и только тогда активируем
     if addon["status"] == "pending" and addon.get("platega_tx_id"):
         try:
-            real_status = await check_status(addon["platega_tx_id"])
+            addon_provider = get_provider(addon.get("provider") or "")
+            real_status = await addon_provider.check_status(addon["platega_tx_id"])
             if real_status == "succeeded":
                 await fulfill_addon(addon_id)
                 addon = await get_addon_by_id(addon_id)
             # Если не succeeded — оставляем pending, webhook/polling попробует снова
-        except PlategaError as e:
+        except PaymentError as e:
             logger.error("Addon status polling: check_status failed for %s: %s", addon_id, e)
 
     return {
@@ -1106,10 +1093,12 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     order_id = uuid.uuid4().hex[:12]
     # Capability-токен: случайный токен для доступа к статусу заказа без авторизации
     capability_token = uuid.uuid4().hex
+    provider = get_active_provider()
     await create_order(
         order_id, req.tariff, total, capability_token,
         promo_code=(promo["code"] if promo else None),
         promo_discount=promo_discount,
+        provider=provider.name,
     )
 
     description = f"VPN подписка {tariff['title']} ({tariff['days']} дней)"
@@ -1117,14 +1106,14 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
         description += f" + {addon_cfg['title']}"
 
     try:
-        payment = await create_payment(
+        payment = await provider.create_payment(
             amount=total,
             order_id=order_id,
             description=description,
             capability_token=capability_token,
         )
-    except PlategaError as e:
-        logger.error("Platega error: %s", e)
+    except PaymentError as e:
+        logger.error("Payment provider error: %s", e)
         raise HTTPException(502, str(e))
 
     await save_platega_tx(order_id, payment["transaction_id"])
@@ -1257,15 +1246,16 @@ async def api_order_status(order_id: str, request: Request, token: str = ""):
         except Exception as e:
             logger.error("Retry failed for order %s: %s", order_id, e)
 
-    # Case 2: not yet paid → check Platega (polling fallback)
+    # Case 2: not yet paid → check provider (polling fallback)
     elif order["status"] != "paid" and order.get("platega_tx_id"):
         try:
-            platega_status = await check_status(order["platega_tx_id"])
-            logger.info("Polling order %s: tx=%s status=%s", order_id, order["platega_tx_id"], platega_status)
-            if platega_status == "succeeded":
+            order_provider = get_provider(order.get("provider") or "")
+            payment_status = await order_provider.check_status(order["platega_tx_id"])
+            logger.info("Polling order %s: tx=%s status=%s", order_id, order["platega_tx_id"], payment_status)
+            if payment_status == "succeeded":
                 await fulfill_order(order_id)
                 order = await get_order(order_id)
-        except PlategaError as e:
+        except PaymentError as e:
             logger.error("Polling error for order %s: %s", order_id, e)
 
     # Case 3: not paid and no tx_id yet → wait for webhook
@@ -1291,37 +1281,31 @@ async def api_order_status(order_id: str, request: Request, token: str = ""):
     return response
 
 
-@app.post("/webhook/platega")
-async def platega_webhook(request: Request):
-    """
-    Webhook от Platega об изменении статуса транзакции.
-    Platega шлёт JSON с полями: id, status, payload (наш order_id).
+async def _handle_payment_webhook(request: Request, provider: "PaymentProvider"):
+    """Общая обработка вебхука платёжного провайдера.
+
+    Провайдер проверяет подлинность (verify_webhook), парсит тело (parse_webhook),
+    а реальный статус всегда перепроверяется через его API (check_status) —
+    поддельный вебхук не пройдёт.
     """
     body = await request.body()
 
-    # Проверяем webhook через X-MerchantId + X-Secret
-    if not verify_platega_webhook(request.headers):
-        logger.warning("Invalid webhook credentials")
+    if not provider.verify_webhook(request.headers, body):
+        logger.warning("Invalid webhook credentials (%s)", provider.name)
         raise HTTPException(403, "Invalid credentials")
 
-    try:
-        body_json = json.loads(body)
-    except Exception:
-        body_json = {}
+    parsed = provider.parse_webhook(body)
+    logger.info("%s webhook received: %s", provider.name, parsed)
 
-    logger.info("Platega webhook received: %s", body_json)
-
-    tx_id = body_json.get("id") or body_json.get("transactionId")
-    status = str(body_json.get("status", "")).upper()
-    order_id = body_json.get("payload") or ""
-
+    tx_id = parsed.get("transaction_id")
+    order_id = parsed.get("order_id") or ""
     if not tx_id:
         return {"ok": False, "error": "no transaction id"}
 
     # 1. Реальный статус транзакции — вычисляем ОДИН раз, до любых веток
     try:
-        real_status = await check_status(tx_id)
-    except PlategaError as e:
+        real_status = await provider.check_status(tx_id)
+    except PaymentError as e:
         logger.error("Webhook check_status failed for tx=%s: %s", tx_id, e)
         return {"ok": True, "msg": "check failed, polling fallback"}
 
@@ -1361,6 +1345,16 @@ async def platega_webhook(request: Request):
 
     await fulfill_order(order["id"])
     return {"ok": True}
+
+
+@app.post("/webhook/platega")
+async def platega_webhook(request: Request):
+    return await _handle_payment_webhook(request, get_provider("platega"))
+
+
+@app.post("/webhook/yookassa")
+async def yookassa_webhook(request: Request):
+    return await _handle_payment_webhook(request, get_provider("yookassa"))
 
 
 # ————————————————— FULFILL ADD-ON (с Lock) —————————————————

@@ -111,6 +111,12 @@ class BrandingRequest(BaseModel):
     support_contact: str = Field(default="", max_length=120)
 
 
+class PaymentSettingsRequest(BaseModel):
+    provider: str = Field(pattern="^(platega|yookassa)$")
+    yookassa_shop_id: str = Field(default="", max_length=64)
+    yookassa_secret_key: str = Field(default="", max_length=200)  # пусто = не менять
+
+
 _ACCENT_RE = r"^#[0-9a-fA-F]{6}$"
 
 
@@ -619,6 +625,11 @@ async def get_settings():
         "tariffs": settings.tariffs,
         "tariff_groups": settings.tariff_groups,
         "branding": settings.branding,
+        "payment": {
+            "provider": settings.payment_provider,
+            "yookassa_shop_id": settings.yookassa_shop_id,
+            "has_yookassa_secret": bool(settings.yookassa_secret_key),
+        },
         "available_inbounds": _parse_inbound_ids(),
         "trial": {
             "enabled": settings.trial_enabled,
@@ -678,6 +689,28 @@ async def update_branding(req: BrandingRequest):
     await save_settings_value("branding", branding)
     logger.info("Admin updated branding: site_name=%s", branding["site_name"])
     return {"ok": True, "branding": branding}
+
+
+@admin_router.post("/settings/payment")
+async def update_payment(req: PaymentSettingsRequest):
+    """Выбор активного провайдера + настройки ЮKassa. Секрет не отдаётся в GET."""
+    settings.payment_provider = req.provider
+    if req.yookassa_shop_id.strip():
+        settings.yookassa_shop_id = req.yookassa_shop_id.strip()
+    if req.yookassa_secret_key.strip():
+        settings.yookassa_secret_key = req.yookassa_secret_key.strip()
+    if settings.payment_provider == "yookassa" and (
+        not settings.yookassa_shop_id or not settings.yookassa_secret_key
+    ):
+        raise HTTPException(400, "Для ЮKassa нужны shop_id и secret_key")
+    payment_cfg = {
+        "provider": settings.payment_provider,
+        "yookassa_shop_id": settings.yookassa_shop_id,
+        "yookassa_secret_key": settings.yookassa_secret_key,
+    }
+    await save_settings_value("payment", payment_cfg)
+    logger.info("Admin updated payment provider: %s", settings.payment_provider)
+    return {"ok": True, "payment": {"provider": settings.payment_provider}}
 
 
 # -- Экспорт / импорт настроек (#7) --

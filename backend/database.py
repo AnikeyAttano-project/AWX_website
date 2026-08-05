@@ -201,6 +201,15 @@ async def init_db():
             await db.execute("ALTER TABLE orders ADD COLUMN promo_discount REAL")
         except Exception:
             pass
+        # Миграция: платёжный провайдер заказа (для обратной совместимости polling)
+        try:
+            await db.execute("ALTER TABLE orders ADD COLUMN provider TEXT")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE device_addons ADD COLUMN provider TEXT")
+        except Exception:
+            pass
         # Миграция: users — verified, trial
         try:
             await db.execute("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 1")
@@ -300,12 +309,13 @@ async def init_db():
 
 
 async def create_order(order_id: str, tariff: str, amount: float, capability_token: str = "",
-                       promo_code: str = None, promo_discount: float = 0.0):
+                       promo_code: str = None, promo_discount: float = 0.0,
+                       provider: str = ""):
     async with _db() as db:
         await db.execute(
-            "INSERT INTO orders (id, tariff, amount, capability_token, promo_code, promo_discount) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (order_id, tariff, amount, capability_token, promo_code, promo_discount),
+            "INSERT INTO orders (id, tariff, amount, capability_token, promo_code, promo_discount, provider) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (order_id, tariff, amount, capability_token, promo_code, promo_discount, provider),
         )
         await db.commit()
 
@@ -1039,6 +1049,13 @@ async def load_runtime_settings():
                 settings.tariff_groups = value
             elif key == "branding" and isinstance(value, dict):
                 settings.branding = value
+            elif key == "payment" and isinstance(value, dict):
+                if "provider" in value:
+                    settings.payment_provider = str(value["provider"])
+                if "yookassa_shop_id" in value:
+                    settings.yookassa_shop_id = str(value["yookassa_shop_id"])
+                if "yookassa_secret_key" in value:
+                    settings.yookassa_secret_key = str(value["yookassa_secret_key"])
             elif key == "trial" and isinstance(value, dict):
                 settings.trial_enabled = bool(value.get("enabled", True))
                 settings.trial_days = int(value.get("days", settings.trial_days))
@@ -1166,12 +1183,14 @@ async def cleanup_expired_trials(grace_days: int = 14) -> int:
 
 async def create_device_addon(addon_id: str, user_id: str, order_id: str,
                                addon_type: str, extra_devices: int, amount_paid: float,
-                               expires_at: str, platega_tx_id: str = ""):
+                               expires_at: str, platega_tx_id: str = "", provider: str = ""):
     async with _db() as db:
         await db.execute(
             "INSERT INTO device_addons (id, user_id, order_id, addon_type, extra_devices, "
-            "amount_paid, status, expires_at, platega_tx_id) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-            (addon_id, user_id, order_id, addon_type, extra_devices, amount_paid, expires_at, platega_tx_id),
+            "amount_paid, status, expires_at, platega_tx_id, provider) VALUES "
+            "(?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (addon_id, user_id, order_id, addon_type, extra_devices, amount_paid, expires_at,
+             platega_tx_id, provider),
         )
         await db.commit()
 

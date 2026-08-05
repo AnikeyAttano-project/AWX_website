@@ -853,6 +853,27 @@ async function loadSettings(){
       </div>
     </div>`;
 
+    // Payment provider editor
+    const pay = d.payment || {};
+    html += `<div class="chart-card"><div class="chart-title">Платёжная система</div>
+      <div class="form-row">
+        <div class="field" style="flex:1;"><label>Провайдер</label>
+          <select id="pay-provider" onchange="document.getElementById('pay-yk').style.display=this.value==='yookassa'?'':'none'">
+            <option value="platega" ${pay.provider==='platega'?'selected':''}>Platega</option>
+            <option value="yookassa" ${pay.provider==='yookassa'?'selected':''}>ЮKassa</option>
+          </select>
+        </div>
+      </div>
+      <div id="pay-yk" style="${pay.provider==='yookassa'?'':'display:none;'}">
+        <div class="form-row">
+          <div class="field"><label>ЮKassa shop_id</label><input id="pay-shop" value="${esc(pay.yookassa_shop_id||'')}" placeholder="123456"></div>
+          <div class="field"><label>ЮKassa secret_key</label><input id="pay-secret" type="password" value="" placeholder="${pay.has_yookassa_secret ? '•••••••• (оставьте пустым, чтобы не менять)' : 'live_...'}" style="width:100%;"></div>
+        </div>
+        <p style="color:var(--text-2);font-size:12.5px;margin:0 0 10px;">ЮKassa: создайте платёж с redirect-confirmation. Вебхук отправляйте на <code>/webhook/yookassa</code> (или нажмите «Проверить подпись» — статус перепроверяется через API).</p>
+      </div>
+      <button class="btn btn-dark" style="margin-top:12px;" onclick="savePayment()">Сохранить платёжную систему</button>
+    </div>`;
+
     // Branding editor
     const b = d.branding || {};
     html += `<div class="chart-card"><div class="chart-title">Брендинг</div>
@@ -1032,6 +1053,19 @@ async function saveTariffGroups(){
   try{
     await api('/admin/settings/tariff_groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups})});
     toast('Группы сохранены');
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function savePayment(){
+  const body = {
+    provider: document.getElementById('pay-provider').value,
+    yookassa_shop_id: document.getElementById('pay-shop').value.trim(),
+    yookassa_secret_key: document.getElementById('pay-secret').value.trim()
+  };
+  try{
+    const resp = await api('/admin/settings/payment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    toast('Платёжная система: ' + (resp.payment&&resp.payment.provider));
+    loadSettings();
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
