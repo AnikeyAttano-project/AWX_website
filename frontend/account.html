@@ -1686,7 +1686,20 @@ async function openTelegramBindModal() {
   injectTelegramWidget('telegram-login-box', cfg.telegram_bot_username);
   _tgMoveWidgetTo('tg-bind-box');
   setTimeout(() => _tgMoveWidgetTo('tg-bind-box'), 350);
-  setTimeout(() => _tgMoveWidgetTo('tg-bind-box'), 900);
+  setTimeout(() => {
+    _tgMoveWidgetTo('tg-bind-box');
+    _tgReloadWidget();  // сбрасываем закешированный/устаревший ответ iframe
+  }, 900);
+}
+
+// Принудительно перезагружает iframe виджета, чтобы он получил свежий ответ
+// от oauth.telegram.org (лечит устаревший «Username invalid» после пересоздания
+// бота или пропагации имени).
+function _tgReloadWidget() {
+  const w = _tgFindWidget();
+  if (w && w.contentWindow) {
+    try { w.contentWindow.location.reload(); } catch (e) { /* cross-origin */ }
+  }
 }
 
 function closeTelegramBindModal() {
