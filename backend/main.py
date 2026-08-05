@@ -44,7 +44,7 @@ from xui_client import (
     create_client, get_subscription_url, _parse_inbound_ids,
     update_client_limit,
     get_sub_links, renew_client, check_client_status,
-    delete_client, rekey_client,
+    delete_client, rekey_client, effective_inbounds,
     XuiError,
 )
 from admin import admin_router
@@ -382,6 +382,7 @@ async def rekey_subscription(order_id: str, user: dict = Depends(require_verifie
             new_email=new_email,
             expiry_ms=expiry_ms,
             limit_ip=devices,
+            inbound_ids=effective_inbounds(order["tariff"]),
         )
         sub_url = await get_subscription_url(result["sub_id"])
         expires_at = datetime.utcfromtimestamp(expiry_ms / 1000).strftime(
@@ -389,7 +390,7 @@ async def rekey_subscription(order_id: str, user: dict = Depends(require_verifie
         )
         await save_subscription(
             order_id, result["email"], result["sub_id"], sub_url,
-            inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
+            inbound_ids=",".join(str(x) for x in effective_inbounds(order["tariff"])),
             expires_at=expires_at,
         )
         logger.info("Rekey: order %s new sub_id=%s", order_id, result["sub_id"])
@@ -919,38 +920,76 @@ class DemoOrderRequest(BaseModel):
 
 # ————————————————— ЭНДПОИНТЫ API —————————————————
 
+def _tariff_payload(slug: str, t: dict) -> dict:
+    """Полный объект тарифа для витрины: цены, add-on'ы, эффективные инбаунды, группа."""
+    days = t["days"]
+    addons = []
+    for atype, cfg in settings.device_addons.items():
+        addons.append({
+            "type": atype,
+            "extra_devices": cfg["extra_devices"],
+            "title": cfg["title"],
+            "price": compute_addon_proration(
+                cfg["base_price"], t.get("discount", 0), days, days
+            )["price_now"],
+        })
+    # Группа, которой принадлежит тариф
+    group_id = None
+    for gid, g in settings.tariff_groups.items():
+        if slug in (g.get("tariffs") or []):
+            group_id = gid
+            break
+    return {
+        "slug": slug,
+        "days": days,
+        "price": t["price"],
+        "title": t["title"],
+        "devices": t.get("devices", 1),
+        "discount": t.get("discount", 0),
+        "inbounds": effective_inbounds(slug),
+        "group": group_id,
+        "addons": addons,
+    }
+
+
 @app.get("/api/tariffs")
 async def list_tariffs():
-    """Список доступных тарифов — для витрины.
+    """Тарифы для витрины, сгруппированные по группам тарифов.
 
-    Каждый тариф дополнен кол-вом устройств, скидкой и ценами add-on'ов
-    (доп. устройства к покупке). Цены add-on'ов считаются сервером через
-    compute_addon_proration для полного периода — фронт их не дублирует,
-    чтобы сумма в модалке и в платёжке не могла разойтись.
+    Ответ: {tariffs: [плоский список — обратная совместимость],
+            groups: [{id,title,description,inbounds,tariffs:[...]}],
+            ungrouped: [slug, ...]}.
+
+    Каждый тариф дополнен кол-вом устройств, скидкой, эффективным списком
+    инбаундов (тариф → группа → все) и ценами add-on'ов (считает сервер —
+    фронт не дублирует, чтобы сумма в модалке и платёжке не разошлась).
     """
-    result = []
+    flat = []
     for slug, t in settings.tariffs.items():
-        days = t["days"]
-        addons = []
-        for atype, cfg in settings.device_addons.items():
-            addons.append({
-                "type": atype,
-                "extra_devices": cfg["extra_devices"],
-                "title": cfg["title"],
-                "price": compute_addon_proration(
-                    cfg["base_price"], t.get("discount", 0), days, days
-                )["price_now"],
-            })
-        result.append({
-            "slug": slug,
-            "days": days,
-            "price": t["price"],
-            "title": t["title"],
-            "devices": t.get("devices", 1),
-            "discount": t.get("discount", 0),
-            "addons": addons,
+        flat.append(_tariff_payload(slug, t))
+
+    grouped_slugs = set()
+    for g in settings.tariff_groups.values():
+        grouped_slugs.update(g.get("tariffs") or [])
+
+    groups_out = []
+    for gid, g in settings.tariff_groups.items():
+        group_tariffs = [
+            _tariff_payload(slug, settings.tariffs[slug])
+            for slug in (g.get("tariffs") or [])
+            if slug in settings.tariffs
+        ]
+        groups_out.append({
+            "id": gid,
+            "title": g.get("title", gid),
+            "description": g.get("description", ""),
+            "inbounds": [int(x) for x in (g.get("inbounds") or [])],
+            "tariffs": group_tariffs,
         })
-    return result
+
+    ungrouped = [slug for slug in settings.tariffs if slug not in grouped_slugs]
+
+    return {"tariffs": flat, "groups": groups_out, "ungrouped": ungrouped}
 
 
 @app.get("/api/config")
@@ -1361,17 +1400,22 @@ async def fulfill_order(order_id: str):
         logger.info("Fulfilling order %s: tariff=%s, days=%s, devices=%s, email=%s",
                     order_id, order["tariff"], days, devices, email)
 
+        # Инбаунды для тарифа: свой список тарифа → группы → все из env.
+        # Клиент создаётся ТОЛЬКО в этих инбаундах.
+        inbound_ids = effective_inbounds(order["tariff"])
+
         try:
             # КЛЮЧЕВОЙ МОМЕНТ —
-            # Создаём клиента ВО ВСЕХ видимых инбаундах
-            # limit_ip = кол-во устройств, разрешённых тарифом
+            # Создаём клиента в инбаундах тарифа (limit_ip = кол-во устройств)
             client_data = await create_client(
                 email=email,
                 duration_days=days,
                 limit_ip=devices,
+                inbound_ids=inbound_ids,
             )
 
-            logger.info("Client created for order %s: sub_id=%s", order_id, client_data.get("sub_id"))
+            logger.info("Client created for order %s: sub_id=%s inbounds=%s",
+                        order_id, client_data.get("sub_id"), inbound_ids)
 
             # Получаем URL подписки
             sub_url = await get_subscription_url(client_data["sub_id"])
@@ -1382,7 +1426,7 @@ async def fulfill_order(order_id: str):
             )
             await save_subscription(
                 order_id, email, client_data["sub_id"], sub_url,
-                inbound_ids=",".join(str(x) for x in _parse_inbound_ids()),
+                inbound_ids=",".join(str(x) for x in inbound_ids),
                 expires_at=expires_at,
             )
             # State machine: processing → completed (ключ выдан)

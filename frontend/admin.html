@@ -821,12 +821,24 @@ async function loadSettings(){
   el.innerHTML = '<div style="text-align:center;padding:48px;"><div style="width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;"></div></div>';
   try{
     const d = await api('/admin/settings');
+    // Глобалы для редактора групп (инбаунды и slug'и тарифов из БД)
+    window.__availableInbounds = d.available_inbounds || [];
+    window.__adminTariffSlugs = Object.keys(d.tariffs || {});
     let html = '';
 
     // Tariffs editor
     html += `<div class="chart-card"><div class="chart-title">Тарифы</div>
-      <div id="tariffs-editor">${renderTariffEditor(d.tariffs)}</div>
+      <div id="tariffs-editor">${renderTariffEditor(d.tariffs, d.available_inbounds||[])}</div>
       <button class="btn btn-dark" style="margin-top:14px;" onclick="saveTariffs()">Сохранить тарифы</button>
+    </div>`;
+
+    // Tariff groups editor
+    html += `<div class="chart-card"><div class="chart-title">Группы тарифов</div>
+      <div id="groups-editor">${renderGroupEditor(d.tariff_groups||{}, d.tariffs||{}, d.available_inbounds||[])}</div>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="btn btn-outline" onclick="addGroupRow()">Добавить группу</button>
+        <button class="btn btn-dark" onclick="saveTariffGroups()">Сохранить группы</button>
+      </div>
     </div>`;
 
     // Trial settings
@@ -867,15 +879,21 @@ async function loadSettings(){
   }catch(e){ el.innerHTML = `<p style="color:var(--err);text-align:center;padding:48px;">Ошибка: ${esc(e.message)}</p>`; }
 }
 
-function renderTariffEditor(tariffs){
+function renderTariffEditor(tariffs, availableInbounds){
   if(!tariffs || !Object.keys(tariffs).length) return '<p style="color:var(--text-3);">Нет тарифов</p>';
+  const inboundOpts = (availableInbounds||[]).map(i => `<option value="${i}">${i}</option>`).join('');
   return Object.entries(tariffs).map(([slug, t]) => `
-    <div style="display:grid;grid-template-columns:120px 60px 80px 60px 40px;gap:8px;align-items:end;margin-bottom:10px;" class="tariff-row" data-slug="${esc(slug)}">
+    <div style="display:grid;grid-template-columns:120px 60px 80px 60px 40px 120px;gap:8px;align-items:end;margin-bottom:10px;" class="tariff-row" data-slug="${esc(slug)}">
       <div class="field"><label>Название</label><input class="t-title" value="${esc(t.title)}"></div>
       <div class="field"><label>Дней</label><input class="t-days" type="number" value="${t.days}" min="1"></div>
       <div class="field"><label>Цена &#8381;</label><input class="t-price" type="number" value="${t.price}" min="1"></div>
       <div class="field"><label>Устр.</label><input class="t-devices" type="number" value="${t.devices||5}" min="1"></div>
       <div class="field"><label>%</label><input class="t-discount" type="number" value="${t.discount||0}" min="0" max="100"></div>
+      <div class="field"><label>Инбаунды</label>
+        <select multiple class="t-inbounds" style="width:100%;height:58px;font-size:12px;">
+          ${inboundOpts.replace(/<option value="(\d+)">/g, (m,i) => `<option value="${i}" ${(t.inbounds||[]).includes(parseInt(i))?'selected':''}>${i}</option>`)}
+        </select>
+      </div>
     </div>
   `).join('');
 }
@@ -885,17 +903,102 @@ async function saveTariffs(){
   const tariffs = {};
   rows.forEach(r => {
     const slug = r.dataset.slug;
+    const inb = Array.from(r.querySelectorAll('.t-inbounds option:checked')).map(o => parseInt(o.value));
     tariffs[slug] = {
       title: r.querySelector('.t-title').value,
       days: parseInt(r.querySelector('.t-days').value)||30,
       price: parseFloat(r.querySelector('.t-price').value)||0,
       devices: parseInt(r.querySelector('.t-devices').value)||5,
       discount: parseInt(r.querySelector('.t-discount').value)||0,
+      inbounds: inb,
     };
   });
   try{
     await api('/admin/settings/tariffs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tariffs})});
     toast('Тарифы сохранены');
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+// ====== ГРУППЫ ТАРИФОВ ======
+function renderGroupEditor(groups, tariffs, availableInbounds){
+  const entries = groups && Object.keys(groups).length ? Object.entries(groups) : [];
+  if(!entries.length) return '<p style="color:var(--text-3);">Нет групп — тарифы показываются плоским списком.</p>';
+  const inboundOpts = (availableInbounds||[]).map(i => `<option value="${i}">${i}</option>`).join('');
+  const tariffOpts = (tariffs ? Object.keys(tariffs) : []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  return entries.map(([gid, g]) => `
+    <div class="group-row" data-gid="${esc(gid)}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;">
+      <div class="form-row">
+        <div class="field" style="flex:1;"><label>ID группы</label><input class="g-id" value="${esc(gid)}"></div>
+        <div class="field" style="flex:1.5;"><label>Название</label><input class="g-title" value="${esc(g.title||gid)}"></div>
+      </div>
+      <div class="field"><label>Описание</label><input class="g-desc" value="${esc(g.description||'')}"></div>
+      <div class="form-row">
+        <div class="field" style="flex:1;"><label>Инбаунды (пусто = все доступные)</label>
+          <select multiple class="g-inbounds" style="width:100%;height:70px;">
+            ${inboundOpts.replace(/<option value="(\d+)">/g, (m,i) => `<option value="${i}" ${(g.inbounds||[]).includes(parseInt(i))?'selected':''}>${i}</option>`)}
+          </select>
+        </div>
+        <div class="field" style="flex:1.5;"><label>Тарифы группы</label>
+          <select multiple class="g-tariffs" style="width:100%;height:70px;">
+            ${tariffOpts.replace(/<option value="([^"]+)">/g, (m,s) => `<option value="${s}" ${(g.tariffs||[]).includes(s)?'selected':''}>${s}</option>`)}
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="removeGroupRow(this)">Удалить группу</button>
+    </div>
+  `).join('');
+}
+
+function addGroupRow(){
+  const wrap = document.getElementById('groups-editor');
+  if(!wrap) return;
+  const placeholder = wrap.querySelector('p');
+  if(placeholder && placeholder.style.color) wrap.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'group-row';
+  div.dataset.gid = 'new_group';
+  div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;';
+  const inboundOpts = (window.__availableInbounds || []).map(i => `<option value="${i}">${i}</option>`).join('');
+  const tariffOpts = (window.__adminTariffSlugs || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  div.innerHTML = `
+    <div class="form-row">
+      <div class="field" style="flex:1;"><label>ID группы</label><input class="g-id" value=""></div>
+      <div class="field" style="flex:1.5;"><label>Название</label><input class="g-title" value=""></div>
+    </div>
+    <div class="field"><label>Описание</label><input class="g-desc" value=""></div>
+    <div class="form-row">
+      <div class="field" style="flex:1;"><label>Инбаунды</label><select multiple class="g-inbounds" style="width:100%;height:70px;">${inboundOpts}</select></div>
+      <div class="field" style="flex:1.5;"><label>Тарифы группы</label><select multiple class="g-tariffs" style="width:100%;height:70px;">${tariffOpts}</select></div>
+    </div>
+    <button class="btn btn-danger btn-sm" onclick="removeGroupRow(this)">Удалить группу</button>`;
+  wrap.appendChild(div);
+}
+
+function removeGroupRow(btn){
+  const row = btn.closest('.group-row');
+  if(row) row.remove();
+}
+
+async function saveTariffGroups(){
+  const rows = document.querySelectorAll('.group-row');
+  const groups = {};
+  let ok = true;
+  rows.forEach(r => {
+    const id = r.querySelector('.g-id').value.trim();
+    const title = r.querySelector('.g-title').value.trim();
+    if(!id || !title){ ok = false; return; }
+    groups[id] = {
+      id: id,
+      title: title,
+      description: r.querySelector('.g-desc').value.trim(),
+      inbounds: Array.from(r.querySelectorAll('.g-inbounds option:checked')).map(o => parseInt(o.value)),
+      tariffs: Array.from(r.querySelectorAll('.g-tariffs option:checked')).map(o => o.value),
+    };
+  });
+  if(!ok){ toast('Заполните ID и название для всех групп', 'error'); return; }
+  try{
+    await api('/admin/settings/tariff_groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups})});
+    toast('Группы сохранены');
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 

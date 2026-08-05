@@ -105,15 +105,43 @@ def _parse_inbound_ids() -> list[int]:
     return [int(x.strip()) for x in str(raw).split(",") if x.strip()]
 
 
+def _available_inbound_ids() -> list[int]:
+    """Все доступные инбаунды (из env) — для валидации/чекбоксов админки."""
+    return _parse_inbound_ids()
+
+
+def effective_inbounds(tariff_slug: str) -> list[int]:
+    """Эффективный список инбаундов для тарифа: тариф → группа → все из env.
+
+    Пустой список на тарифе = наследовать от группы; у группы пусто/нет группы —
+    использовать все доступные (поведение по умолчанию до введения групп).
+    """
+    tariff = settings.tariffs.get(tariff_slug) or {}
+    tin = tariff.get("inbounds")
+    if tin:
+        return [int(x) for x in tin]
+    for g in settings.tariff_groups.values():
+        if tariff_slug in (g.get("tariffs") or []):
+            gin = g.get("inbounds")
+            if gin:
+                return [int(x) for x in gin]
+            break
+    return _parse_inbound_ids()
+
+
 async def create_client(
     email: str,
     duration_days: int = 0,
     limit_ip: int = 1,
     total_gb: int = 0,
     expiry_ms: int | None = None,
+    inbound_ids: list[int] | None = None,
 ) -> dict:
     """
-    Создаёт клиента сразу во ВСЕХ видимых инбаундах и возвращает subId.
+    Создаёт клиента в инбаундах и возвращает subId.
+
+    ``inbound_ids`` — список инбаундов. Если None — все из XUI_INBOUND_IDS
+    (для тарифа передаётся его эффективный список: тариф → группа → все).
 
     POST /add не возвращает subId — нужно делать GET /get/{email} после создания.
 
@@ -124,7 +152,7 @@ async def create_client(
     Возвращает: {"email": ..., "sub_id": ..., "uuid": ...}
     """
     _require_managed_email(email)
-    inbound_ids = _parse_inbound_ids()
+    inbound_ids = inbound_ids if inbound_ids is not None else _parse_inbound_ids()
     expiry = expiry_ms if expiry_ms is not None else _ms_timestamp(duration_days)
     body = {
         "client": {
@@ -460,6 +488,7 @@ async def rekey_client(
     expiry_ms: int,
     limit_ip: int = 1,
     total_gb: int = 0,
+    inbound_ids: list[int] | None = None,
 ) -> dict:
     """
     Перевыпуск ключа: создаёт НОВОГО клиента, затем удаляет старого.
@@ -469,6 +498,8 @@ async def rekey_client(
 
     ``expiry_ms`` — дата истечения нового клиента (мс). Позволяет сохранить
     оставшееся время подписки при перевыпуске.
+
+    ``inbound_ids`` — инбаунды нового клиента (None = все из XUI_INBOUND_IDS).
 
     Возвращает: {"email": ..., "sub_id": ..., "uuid": ...}
     """
@@ -480,6 +511,7 @@ async def rekey_client(
         expiry_ms=expiry_ms,
         limit_ip=limit_ip,
         total_gb=total_gb,
+        inbound_ids=inbound_ids,
     )
 
     # Шаг 2: удаляем старого клиента. Если он уже удалён (not found) —

@@ -75,12 +75,18 @@ class Settings(BaseSettings):
     debug_sandbox_enabled: bool = False
 
     # Тарифы: slug → (дней, цена в RUB, название, кол-во устройств, скидка %)
+    # inbounds: список инбаундов для ТАРИФА. Пусто ([]) = наследовать от группы,
+    # если группы нет — использовать все из XUI_INBOUND_IDS.
     tariffs: dict = {
-        "quantum_month": {"days": 31, "price": 300, "title": "Quantum Месяц", "devices": 5, "discount": 0},
-        "quantum_quarter": {"days": 93, "price": 855, "title": "Quantum 3 Месяца", "devices": 5, "discount": 5},
-        "quantum_halfyear": {"days": 186, "price": 1620, "title": "Quantum 6 Месяцев", "devices": 5, "discount": 10},
-        "quantum_year": {"days": 365, "price": 2900, "title": "Quantum 12 Месяцев", "devices": 5, "discount": 20},
+        "quantum_month": {"days": 31, "price": 300, "title": "Quantum Месяц", "devices": 5, "discount": 0, "inbounds": []},
+        "quantum_quarter": {"days": 93, "price": 855, "title": "Quantum 3 Месяца", "devices": 5, "discount": 5, "inbounds": []},
+        "quantum_halfyear": {"days": 186, "price": 1620, "title": "Quantum 6 Месяцев", "devices": 5, "discount": 10, "inbounds": []},
+        "quantum_year": {"days": 365, "price": 2900, "title": "Quantum 12 Месяцев", "devices": 5, "discount": 20, "inbounds": []},
     }
+
+    # Группы тарифов: {group_id: {id, title, description, inbounds: [...], tariffs: [slug, ...]}}.
+    # Пусто = витрина плоская. inbounds группы применяются, если у тарифа своих нет.
+    tariff_groups: dict = {}
 
     # Add-on пакеты: покупка доп. устройств с пропорциональной оплатой (proration)
     device_addons: dict = {

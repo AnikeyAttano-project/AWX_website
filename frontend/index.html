@@ -389,7 +389,10 @@ let TARIFFS_CACHE = [];
 async function loadTariffs() {
   try {
     const resp = await fetch(`${API_BASE}/api/tariffs`);
-    const tariffs = await resp.json();
+    const data = await resp.json();
+    // Ответ: {tariffs: [плоский], groups: [...], ungrouped: [slug...]}
+    // Обратная совместимость: если пришёл массив — используем как есть.
+    const tariffs = Array.isArray(data) ? data : (data.tariffs || []);
     TARIFFS_CACHE = tariffs;
     const monthPrice = tariffs.find(t => t.slug === 'quantum_month')?.price;
 
@@ -403,8 +406,7 @@ async function loadTariffs() {
       return names[slug] || title;
     };
 
-    const container = document.getElementById('tariff-grid');
-    container.innerHTML = tariffs.map((t, idx) => {
+    const tariffCard = (t, idx) => {
       const fullPrice = monthPrice ? Math.round(monthPrice * t.days / 30) : null;
       const discount = fullPrice ? Math.round((1 - t.price / fullPrice) * 100) : 0;
       const isPopular = idx === 1;
@@ -419,7 +421,7 @@ async function loadTariffs() {
         <div class="tariff-period">за ${t.days} ${dayWord}</div>
         <ul class="tariff-features">
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Безлимитный трафик</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>5 устройств</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>${t.devices || 5} устройств</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Все серверы</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Игровой режим</li>
         </ul>
@@ -427,10 +429,49 @@ async function loadTariffs() {
           Подключить
         </button>
       </div>
-    `}).join('');
+    `;
+    };
+
+    const container = document.getElementById('tariff-grid');
+    const groups = (data.groups || []).filter(g => g.tariffs && g.tariffs.length);
+    let html = '';
+
+    if (groups.length) {
+      container.style.display = 'block';  // внешний контейнер — блок, сетки внутри групп
+      groups.forEach(g => {
+        html += `
+          <div class="tariff-group" style="margin-bottom:32px;">
+            <h3 style="font-size:22px;font-weight:700;margin:0 0 4px;">${escHtml(g.title)}</h3>
+            ${g.description ? `<p style="color:var(--text-2);font-size:14px;margin:0 0 16px;">${escHtml(g.description)}</p>` : ''}
+            <div class="tariff-grid">${g.tariffs.map(tariffCard).join('')}</div>
+          </div>`;
+      });
+      // Тарифы без группы — отдельной секцией
+      const ungrouped = (data.ungrouped || [])
+        .map(slug => tariffs.find(t => t.slug === slug))
+        .filter(Boolean);
+      if (ungrouped.length) {
+        html += `
+          <div class="tariff-group">
+            <h3 style="font-size:22px;font-weight:700;margin:0 0 16px;">Все тарифы</h3>
+            <div class="tariff-grid">${ungrouped.map(tariffCard).join('')}</div>
+          </div>`;
+      }
+    } else {
+      container.style.display = '';
+      html = tariffs.map(tariffCard).join('');
+    }
+
+    container.innerHTML = html;
   } catch (e) {
     console.error('Failed to load tariffs:', e);
   }
+}
+
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function isAuthenticated() {

@@ -39,6 +39,7 @@ from database import (
     get_user_subscriptions, mark_order_deleted, set_devices_admin_addon,
     add_site_log, get_site_logs,
 )
+from xui_client import _parse_inbound_ids
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,23 @@ class TariffItem(BaseModel):
     title: str = Field(min_length=1)
     devices: int = Field(ge=1, default=5)
     discount: int = Field(ge=0, le=100, default=0)
+    inbounds: list[int] = Field(default_factory=list)
 
 
 class TariffUpdateRequest(BaseModel):
     tariffs: dict[str, TariffItem]
+
+
+class TariffGroupItem(BaseModel):
+    id: str = Field(min_length=1, max_length=50)
+    title: str = Field(min_length=1, max_length=80)
+    description: str = ""
+    inbounds: list[int] = Field(default_factory=list)
+    tariffs: list[str] = Field(default_factory=list)
+
+
+class TariffGroupsRequest(BaseModel):
+    groups: dict[str, TariffGroupItem]
 
 
 class TrialSettingsRequest(BaseModel):
@@ -562,10 +576,24 @@ async def get_stats():
 #  SETTINGS
 # =====================================================================
 
+def _validate_inbounds(values: list[int]) -> None:
+    """Инбаунды тарифа/группы должны быть подмножеством доступных (XUI_INBOUND_IDS)."""
+    from xui_client import _parse_inbound_ids
+    available = set(_parse_inbound_ids())
+    bad = [int(x) for x in values if int(x) not in available]
+    if bad:
+        raise HTTPException(
+            400,
+            f"Инбаунды {bad} недоступны. Доступные: {sorted(available)}",
+        )
+
+
 @admin_router.get("/settings")
 async def get_settings():
     return {
         "tariffs": settings.tariffs,
+        "tariff_groups": settings.tariff_groups,
+        "available_inbounds": _parse_inbound_ids(),
         "trial": {
             "enabled": settings.trial_enabled,
             "days": settings.trial_days,
@@ -587,11 +615,32 @@ async def update_tariffs(req: TariffUpdateRequest):
     if not req.tariffs:
         raise HTTPException(400, "Tariffs cannot be empty")
 
+    for slug, t in req.tariffs.items():
+        _validate_inbounds(t.inbounds)
+
     tariffs_dict = {slug: tariff.model_dump() for slug, tariff in req.tariffs.items()}
     settings.tariffs = tariffs_dict
     await save_settings_value("tariffs", tariffs_dict)
     logger.info("Admin updated tariffs: %s", list(tariffs_dict.keys()))
     return {"ok": True, "tariffs": tariffs_dict}
+
+
+@admin_router.post("/settings/tariff_groups")
+async def update_tariff_groups(req: TariffGroupsRequest):
+    """Сохранить группы тарифов. Валидация: тарифы существуют, инбаунды доступны."""
+    for gid, g in req.groups.items():
+        if g.id != gid:
+            raise HTTPException(400, f"Ключ группы '{gid}' не совпадает с id '{g.id}'")
+        unknown = [s for s in g.tariffs if s not in settings.tariffs]
+        if unknown:
+            raise HTTPException(400, f"Группа '{gid}': тарифы {unknown} не существуют")
+        _validate_inbounds(g.inbounds)
+
+    groups_dict = {gid: g.model_dump() for gid, g in req.groups.items()}
+    settings.tariff_groups = groups_dict
+    await save_settings_value("tariff_groups", groups_dict)
+    logger.info("Admin updated tariff groups: %s", list(groups_dict.keys()))
+    return {"ok": True, "tariff_groups": groups_dict}
 
 
 @admin_router.post("/settings/trial")

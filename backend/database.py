@@ -894,6 +894,8 @@ async def load_runtime_settings():
                 value = row["value"]
             if key == "tariffs" and isinstance(value, dict):
                 settings.tariffs = value
+            elif key == "tariff_groups" and isinstance(value, dict):
+                settings.tariff_groups = value
             elif key == "trial" and isinstance(value, dict):
                 settings.trial_enabled = bool(value.get("enabled", True))
                 settings.trial_days = int(value.get("days", settings.trial_days))
