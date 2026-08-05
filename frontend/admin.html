@@ -934,36 +934,84 @@ async function loadSettings(){
 }
 
 function renderTariffEditor(tariffs, availableInbounds){
-  if(!tariffs || !Object.keys(tariffs).length) return '<p style="color:var(--text-3);">Нет тарифов</p>';
+  if(!tariffs || !Object.keys(tariffs).length) return '<p style="color:var(--text-3);">Нет тарифов. Нажмите «Добавить тариф».</p>';
   const inboundOpts = (availableInbounds||[]).map(i => `<option value="${i}">${i}</option>`).join('');
-  return Object.entries(tariffs).map(([slug, t]) => `
-    <div style="display:grid;grid-template-columns:120px 60px 80px 60px 40px 120px;gap:8px;align-items:end;margin-bottom:10px;" class="tariff-row" data-slug="${esc(slug)}">
-      <div class="field"><label>Название</label><input class="t-title" value="${esc(t.title)}"></div>
-      <div class="field"><label>Дней</label><input class="t-days" type="number" value="${t.days}" min="1"></div>
-      <div class="field"><label>Цена &#8381;</label><input class="t-price" type="number" value="${t.price}" min="1"></div>
-      <div class="field"><label>Устр.</label><input class="t-devices" type="number" value="${t.devices||5}" min="1"></div>
-      <div class="field"><label>%</label><input class="t-discount" type="number" value="${t.discount||0}" min="0" max="100"></div>
-      <div class="field"><label>Инбаунды</label>
-        <select multiple class="t-inbounds" style="width:100%;height:58px;font-size:12px;">
+  const cards = Object.entries(tariffs).map(([slug, t]) => `
+    <div style="border:1px solid var(--border,#E7E5E0);border-radius:10px;padding:14px;margin-bottom:12px;background:var(--surface,#fff);" class="tariff-card" data-slug="${esc(slug)}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:13px;font-weight:600;color:var(--accent,#1F5F52);font-family:monospace;">${esc(slug)}</span>
+        <button class="btn btn-danger btn-sm" onclick="removeTariff('${esc(slug)}')" style="font-size:11px;padding:4px 10px;">✕ Удалить</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1.4fr .7fr .7fr .5fr .5fr;gap:10px;align-items:end;">
+        <div class="field"><label>Название</label><input class="t-title" value="${esc(t.title)}" style="width:100%;"></div>
+        <div class="field"><label>Дней</label><input class="t-days" type="number" value="${t.days}" min="1" style="width:100%;"></div>
+        <div class="field"><label>Цена &#8381;</label><input class="t-price" type="number" value="${t.price}" min="1" style="width:100%;"></div>
+        <div class="field"><label>Устр.</label><input class="t-devices" type="number" value="${t.devices||5}" min="1" style="width:100%;"></div>
+        <div class="field"><label>% скидка</label><input class="t-discount" type="number" value="${t.discount||0}" min="0" max="100" style="width:100%;"></div>
+      </div>
+      <div class="field" style="margin-top:8px;">
+        <label>Инбаунды (пусто = все)</label>
+        <select multiple class="t-inbounds" style="width:100%;height:64px;font-size:12px;">
           ${inboundOpts.replace(/<option value="(\d+)">/g, (m,i) => `<option value="${i}" ${(t.inbounds||[]).includes(parseInt(i))?'selected':''}>${i}</option>`)}
         </select>
       </div>
     </div>
   `).join('');
+  return `<div style="margin-bottom:12px;">
+    <button class="btn btn-outline" onclick="addTariff()" style="font-size:13px;padding:8px 16px;">+ Добавить тариф</button>
+  </div>` + cards;
+}
+
+function addTariff(){
+  const wrap = document.getElementById('tariffs-editor');
+  if (!wrap) return;
+  // Новый slug — timestamp
+  const slug = 'new_tariff_' + Date.now();
+  const card = document.createElement('div');
+  card.className = 'tariff-card';
+  card.dataset.slug = slug;
+  card.style.cssText = 'border:1px solid var(--border,#E7E5E0);border-radius:10px;padding:14px;margin-bottom:12px;background:var(--surface,#fff);';
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <input class="t-slug" value="${esc(slug)}" placeholder="slug (unique)" style="font-size:13px;font-weight:600;color:var(--accent,#1F5F52);font-family:monospace;max-width:220px;border:1px solid var(--border,#E7E5E0);border-radius:6px;padding:6px 10px;" />
+      <button class="btn btn-danger btn-sm" onclick="this.closest('.tariff-card').remove()" style="font-size:11px;padding:4px 10px;">✕ Удалить</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1.4fr .7fr .7fr .5fr .5fr;gap:10px;align-items:end;">
+      <div class="field"><label>Название</label><input class="t-title" placeholder="Название тарифа" style="width:100%;"></div>
+      <div class="field"><label>Дней</label><input class="t-days" type="number" value="30" min="1" style="width:100%;"></div>
+      <div class="field"><label>Цена &#8381;</label><input class="t-price" type="number" value="0" min="1" style="width:100%;"></div>
+      <div class="field"><label>Устр.</label><input class="t-devices" type="number" value="5" min="1" style="width:100%;"></div>
+      <div class="field"><label>% скидка</label><input class="t-discount" type="number" value="0" min="0" max="100" style="width:100%;"></div>
+    </div>
+    <div class="field" style="margin-top:8px;">
+      <label>Инбаунды (пусто = все)</label>
+      <select multiple class="t-inbounds" style="width:100%;height:64px;font-size:12px;">
+        ${(window.__availableInbounds||[]).map(i=>`<option value="${i}">${i}</option>`).join('')}
+      </select>
+    </div>
+  `;
+  wrap.querySelector('.tariff-card')?.parentElement?.insertBefore(card, wrap.querySelector('.tariff-card')) || wrap.appendChild(card);
+}
+
+function removeTariff(slug){
+  const card = document.querySelector(`.tariff-card[data-slug="${CSS.escape(slug)}"]`);
+  if (card) card.remove();
 }
 
 async function saveTariffs(){
-  const rows = document.querySelectorAll('.tariff-row');
+  const rows = document.querySelectorAll('.tariff-card');
   const tariffs = {};
   rows.forEach(r => {
-    const slug = r.dataset.slug;
+    const slug = r.querySelector('.t-slug')?.value?.trim() || r.dataset.slug;
+    if (!slug) return;
     const inb = Array.from(r.querySelectorAll('.t-inbounds option:checked')).map(o => parseInt(o.value));
     tariffs[slug] = {
-      title: r.querySelector('.t-title').value,
-      days: parseInt(r.querySelector('.t-days').value)||30,
-      price: parseFloat(r.querySelector('.t-price').value)||0,
-      devices: parseInt(r.querySelector('.t-devices').value)||5,
-      discount: parseInt(r.querySelector('.t-discount').value)||0,
+      slug: slug,
+      title: r.querySelector('.t-title')?.value || slug,
+      days: parseInt(r.querySelector('.t-days')?.value)||30,
+      price: parseFloat(r.querySelector('.t-price')?.value)||0,
+      devices: parseInt(r.querySelector('.t-devices')?.value)||5,
+      discount: parseInt(r.querySelector('.t-discount')?.value)||0,
       inbounds: inb,
     };
   });
