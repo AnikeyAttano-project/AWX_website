@@ -864,6 +864,16 @@ async function loadSettings(){
       <button class="btn btn-dark" style="margin-top:12px;" onclick="saveBranding()">Сохранить брендинг</button>
     </div>`;
 
+    // Export / import settings
+    html += `<div class="chart-card"><div class="chart-title">Экспорт / импорт настроек</div>
+      <p style="color:var(--text-2);font-size:13px;margin:0 0 12px;">Бэкап или перенос настроек (тарифы, группы, брендинг, триал, рефералка, промокоды) в JSON-файл.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline" onclick="exportSettings()">Экспорт (JSON)</button>
+        <button class="btn btn-outline" onclick="document.getElementById('import-file').click()">Импорт из JSON</button>
+        <input type="file" id="import-file" accept=".json,application/json" style="display:none;" onchange="importSettings(event)">
+      </div>
+    </div>`;
+
     // Trial settings
     html += `<div class="chart-card"><div class="chart-title">Пробный период</div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
@@ -1036,6 +1046,35 @@ async function saveBranding(){
     await api('/admin/settings/branding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     toast('Брендинг сохранён');
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function exportSettings(){
+  try{
+    const d = await api('/admin/settings/export');
+    const blob = new Blob([JSON.stringify(d, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'awx-settings-backup.json';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 500);
+    toast('Настройки экспортированы');
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function importSettings(ev){
+  const file = ev.target.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const resp = await api('/admin/settings/import', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+    toast('Импортировано: ' + (resp.imported||[]).join(', '));
+    loadSettings();
+  }catch(e){
+    toast('Ошибка импорта: '+e.message, 'error');
+  }finally{
+    ev.target.value = '';
+  }
 }
 
 async function saveTrial(){

@@ -626,12 +626,7 @@ async def get_settings():
             "gb": settings.trial_gb,
             "devices": settings.trial_devices,
         },
-        "referral": {
-            "enabled": (await _scalar("SELECT value FROM referral_settings WHERE key='referral_enabled'")) == "1",
-            "bonus_percent": int(await _scalar("SELECT value FROM referral_settings WHERE key='bonus_percent'") or 10),
-            "level2_percent": int(await _scalar("SELECT value FROM referral_settings WHERE key='level2_percent'") or 0),
-            "level3_percent": int(await _scalar("SELECT value FROM referral_settings WHERE key='level3_percent'") or 0),
-        },
+        "referral": await _referral_settings_dict(),
         "demo_mode": settings.demo_mode,
     }
 
@@ -683,6 +678,140 @@ async def update_branding(req: BrandingRequest):
     await save_settings_value("branding", branding)
     logger.info("Admin updated branding: site_name=%s", branding["site_name"])
     return {"ok": True, "branding": branding}
+
+
+# -- Экспорт / импорт настроек (#7) --
+
+async def _referral_settings_dict() -> dict:
+    return {
+        "enabled": (await _scalar("SELECT value FROM referral_settings WHERE key='referral_enabled'")) == "1",
+        "bonus_percent": int(await _scalar("SELECT value FROM referral_settings WHERE key='bonus_percent'") or 10),
+        "level2_percent": int(await _scalar("SELECT value FROM referral_settings WHERE key='level2_percent'") or 0),
+        "level3_percent": int(await _scalar("SELECT value FROM referral_settings WHERE key='level3_percent'") or 0),
+    }
+
+
+@admin_router.get("/settings/export")
+async def export_settings():
+    """Полный бэкап настроек: тарифы, группы, брендинг, триал, рефералка, промо."""
+    data = {
+        "version": 1,
+        "exported_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "tariffs": settings.tariffs,
+        "tariff_groups": settings.tariff_groups,
+        "branding": settings.branding,
+        "trial": {
+            "enabled": settings.trial_enabled,
+            "days": settings.trial_days,
+            "gb": settings.trial_gb,
+            "devices": settings.trial_devices,
+        },
+        "referral": await _referral_settings_dict(),
+        "promo_codes": await list_promo_codes(),
+    }
+    return data
+
+
+class ImportSettingsRequest(BaseModel):
+    tariffs: dict[str, TariffItem] | None = None
+    tariff_groups: dict[str, TariffGroupItem] | None = None
+    branding: BrandingRequest | None = None
+    trial: dict | None = None
+    referral: dict | None = None
+    promo_codes: list[dict] | None = None
+
+
+@admin_router.post("/settings/import")
+async def import_settings(req: ImportSettingsRequest):
+    imported = []
+
+    if req.tariffs is not None:
+        if not req.tariffs:
+            raise HTTPException(400, "tariffs не может быть пустым")
+        for t in req.tariffs.values():
+            _validate_inbounds(t.inbounds)
+        settings.tariffs = {slug: t.model_dump() for slug, t in req.tariffs.items()}
+        await save_settings_value("tariffs", settings.tariffs)
+        imported.append("tariffs")
+
+    if req.tariff_groups is not None:
+        for gid, g in req.tariff_groups.items():
+            if g.id != gid:
+                raise HTTPException(400, f"Ключ группы '{gid}' не совпадает с id")
+            unknown = [s for s in g.tariffs if s not in settings.tariffs]
+            if unknown:
+                raise HTTPException(400, f"Группа '{gid}': тарифы {unknown} не существуют")
+            _validate_inbounds(g.inbounds)
+        settings.tariff_groups = {gid: g.model_dump() for gid, g in req.tariff_groups.items()}
+        await save_settings_value("tariff_groups", settings.tariff_groups)
+        imported.append("tariff_groups")
+
+    if req.branding is not None:
+        if not req.branding.site_name.strip():
+            raise HTTPException(400, "site_name не может быть пустым")
+        _validate_accent_color(req.branding.accent_color)
+        settings.branding = req.branding.model_dump()
+        await save_settings_value("branding", settings.branding)
+        imported.append("branding")
+
+    if req.trial is not None:
+        t = req.trial
+        trial_val = {
+            "enabled": bool(t.get("enabled", settings.trial_enabled)),
+            "days": int(t.get("days", settings.trial_days)),
+            "gb": int(t.get("gb", settings.trial_gb)),
+            "devices": int(t.get("devices", settings.trial_devices)),
+        }
+        settings.trial_enabled = trial_val["enabled"]
+        settings.trial_days = trial_val["days"]
+        settings.trial_gb = trial_val["gb"]
+        settings.trial_devices = trial_val["devices"]
+        await save_settings_value("trial", trial_val)
+        imported.append("trial")
+
+    if req.referral is not None:
+        r = req.referral
+        vals = {
+            "referral_enabled": "1" if bool(r.get("enabled")) else "0",
+            "bonus_percent": str(int(r.get("bonus_percent", 10) or 10)),
+            "level2_percent": str(int(r.get("level2_percent", 0) or 0)),
+            "level3_percent": str(int(r.get("level3_percent", 0) or 0)),
+        }
+        async with _db() as db:
+            for k, v in vals.items():
+                await db.execute(
+                    "INSERT INTO referral_settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (k, v)
+                )
+            await db.commit()
+        imported.append("referral")
+
+    if req.promo_codes is not None:
+        added = 0
+        for p in req.promo_codes:
+            code = str(p.get("code", "")).strip().upper()
+            if not code:
+                continue
+            kind = p.get("kind", "percent")
+            value = float(p.get("value", 0))
+            if kind not in ("percent", "fixed") or value <= 0:
+                continue
+            try:
+                await create_promo_code(
+                    code=code, kind=kind, value=value,
+                    max_uses=int(p.get("max_uses", 0)),
+                    expires_at=p.get("expires_at") or None,
+                    tariff_group=p.get("tariff_group") or None,
+                )
+                added += 1
+            except ValueError:
+                pass  # уже существует
+        imported.append(f"promo_codes(+{added})")
+
+    if not imported:
+        raise HTTPException(400, "Пустой файл импорта")
+    await add_site_log("settings_import", actor="admin", details=", ".join(imported))
+    return {"ok": True, "imported": imported}
 
 
 # -- Промо-коды --
