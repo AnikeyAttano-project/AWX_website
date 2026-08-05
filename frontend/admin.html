@@ -853,6 +853,17 @@ async function loadSettings(){
       </div>
     </div>`;
 
+    // Branding editor
+    const b = d.branding || {};
+    html += `<div class="chart-card"><div class="chart-title">Брендинг</div>
+      <div class="form-row">
+        <div class="field" style="flex:1.5;"><label>Название сайта</label><input id="b-name" value="${esc(b.site_name||'')}"></div>
+        <div class="field" style="flex:1;"><label>Акцентный цвет</label><input id="b-accent" type="color" value="${esc(b.accent_color||'#1F5F52')}" style="height:38px;padding:2px;cursor:pointer;"></div>
+        <div class="field" style="flex:1.5;"><label>Контакт поддержки</label><input id="b-support" value="${esc(b.support_contact||'')}" placeholder="support@example.com"></div>
+      </div>
+      <button class="btn btn-dark" style="margin-top:12px;" onclick="saveBranding()">Сохранить брендинг</button>
+    </div>`;
+
     // Trial settings
     html += `<div class="chart-card"><div class="chart-title">Пробный период</div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
@@ -1011,6 +1022,19 @@ async function saveTariffGroups(){
   try{
     await api('/admin/settings/tariff_groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups})});
     toast('Группы сохранены');
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function saveBranding(){
+  const body = {
+    site_name: document.getElementById('b-name').value.trim(),
+    accent_color: document.getElementById('b-accent').value,
+    support_contact: document.getElementById('b-support').value.trim()
+  };
+  if(!body.site_name){ toast('Введите название сайта', 'error'); return; }
+  try{
+    await api('/admin/settings/branding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    toast('Брендинг сохранён');
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 

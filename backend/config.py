@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     # Пусто = витрина плоская. inbounds группы применяются, если у тарифа своих нет.
     tariff_groups: dict = {}
 
+    # Брендинг: название сайта, акцентный цвет, контакт поддержки.
+    # Редактируется в админке (Настройки → Брендинг), применяется на витрине и в ЛК.
+    branding: dict = {
+        "site_name": "AWX VPN",
+        "accent_color": "#1F5F52",
+        "support_contact": "support@awxvpn.com",
+    }
+
     # Add-on пакеты: покупка доп. устройств с пропорциональной оплатой (proration)
     device_addons: dict = {
         "devices_5":  {"extra_devices": 5,  "base_price": 100, "title": "+5 устройств"},

@@ -105,6 +105,21 @@ class PromoCodeCreateRequest(BaseModel):
     tariff_group: str = ""                    # id группы тарифов или пусто (все)
 
 
+class BrandingRequest(BaseModel):
+    site_name: str = Field(min_length=1, max_length=60)
+    accent_color: str = Field(default="#1F5F52")
+    support_contact: str = Field(default="", max_length=120)
+
+
+_ACCENT_RE = r"^#[0-9a-fA-F]{6}$"
+
+
+def _validate_accent_color(color: str) -> None:
+    import re
+    if color and not re.match(_ACCENT_RE, color.strip()):
+        raise HTTPException(400, "accent_color должен быть HEX-цветом вида #RRGGBB")
+
+
 class TrialSettingsRequest(BaseModel):
     enabled: bool = True
     days: int = Field(ge=1, le=365, default=3)
@@ -603,6 +618,7 @@ async def get_settings():
     return {
         "tariffs": settings.tariffs,
         "tariff_groups": settings.tariff_groups,
+        "branding": settings.branding,
         "available_inbounds": _parse_inbound_ids(),
         "trial": {
             "enabled": settings.trial_enabled,
@@ -651,6 +667,22 @@ async def update_tariff_groups(req: TariffGroupsRequest):
     await save_settings_value("tariff_groups", groups_dict)
     logger.info("Admin updated tariff groups: %s", list(groups_dict.keys()))
     return {"ok": True, "tariff_groups": groups_dict}
+
+
+@admin_router.post("/settings/branding")
+async def update_branding(req: BrandingRequest):
+    if not req.site_name.strip():
+        raise HTTPException(400, "site_name не может быть пустым")
+    _validate_accent_color(req.accent_color)
+    branding = {
+        "site_name": req.site_name.strip(),
+        "accent_color": req.accent_color.strip(),
+        "support_contact": req.support_contact.strip(),
+    }
+    settings.branding = branding
+    await save_settings_value("branding", branding)
+    logger.info("Admin updated branding: site_name=%s", branding["site_name"])
+    return {"ok": True, "branding": branding}
 
 
 # -- Промо-коды --

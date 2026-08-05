@@ -205,7 +205,7 @@
         <svg class="logo-mark" viewBox="0 0 24 24" fill="none">
           <path d="M12 2L4 5v6c0 5.2 3.4 9.4 8 11 4.6-1.6 8-5.8 8-11V5l-8-3z" stroke="#191815" stroke-width="1.6" stroke-linejoin="round"/>
         </svg>
-        AWX VPN
+        <span class="brand-name">AWX VPN</span>
       </a>
       <div class="nav-links">
         <a href="#features">Возможности</a>
@@ -243,7 +243,7 @@
 <section class="features" id="features">
   <div class="wrap">
     <div class="section-head">
-      <h2>Почему AWX VPN</h2>
+      <h2 class="brand-hero">Почему AWX VPN</h2>
       <p>Без лишних обещаний — только то, что действительно важно</p>
     </div>
     <div class="feat-grid">
@@ -365,9 +365,9 @@
       <div class="footer-links">
         <a href="/privacy.html">Политика конфиденциальности</a>
         <a href="/terms.html">Пользовательское соглашение</a>
-        <a href="mailto:support@awxvpn.com">Поддержка</a>
+        <a id="support-link" href="mailto:support@awxvpn.com">Поддержка</a>
       </div>
-      <div class="footer-copy">© 2026 AWX VPN</div>
+      <div id="footer-copy" class="footer-copy">© 2026 AWX VPN</div>
     </div>
   </div>
 </footer>
@@ -770,6 +770,43 @@ async function initDemoMode() {
   }
 }
 
+// БРЕНДИНГ из админки (site_name, accent_color, support_contact)
+async function initBranding() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/config`);
+    const data = await resp.json();
+    if (data.branding) applyBranding(data.branding);
+  } catch (e) { /* сервер недоступен — остаёмся с дефолтом */ }
+}
+
+// Применение брендинга из админки: название, акцентный цвет, поддержка.
+function applyBranding(b) {
+  if (!b) return;
+  const name = b.site_name || 'AWX VPN';
+  document.title = document.title.replace(/^[^—–-]+/, name) || name + ' — Приватный доступ в сеть';
+  document.querySelectorAll('.brand-name').forEach(el => { el.textContent = name; });
+  const hero = document.querySelector('.brand-hero');
+  if (hero) hero.textContent = hero.textContent.replace(/AWX VPN/, name);
+  const copy = document.getElementById('footer-copy');
+  if (copy) copy.textContent = '© ' + (new Date().getFullYear()) + ' ' + name;
+  const support = document.getElementById('support-link');
+  if (support && b.support_contact) {
+    support.href = /^[^@]+@[^@]+$/.test(b.support_contact) ? 'mailto:' + b.support_contact : b.support_contact;
+    support.textContent = b.support_contact.split('@')[0].length ? 'Поддержка' : 'Поддержка';
+  }
+  if (b.accent_color) {
+    document.documentElement.style.setProperty('--accent', b.accent_color);
+    document.documentElement.style.setProperty('--accent-bg', hexToRgba(b.accent_color, 0.10));
+  }
+}
+
+function hexToRgba(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return 'rgba(0,0,0,0.08)';
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${alpha})`;
+}
+
 async function initNavUser() {
   const token = localStorage.getItem('awx_token');
   const loginLink = document.getElementById('nav-login-link');
@@ -806,6 +843,8 @@ initNavUser();
 loadTariffs();
 
 initDemoMode();
+
+initBranding();
 
 // Scroll effect for header
 const header = document.querySelector('header');

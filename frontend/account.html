@@ -282,7 +282,7 @@
         <svg class="logo-mark" viewBox="0 0 24 24" fill="none">
           <path d="M12 2L4 5v6c0 5.2 3.4 9.4 8 11 4.6-1.6 8-5.8 8-11V5l-8-3z" stroke="#191815" stroke-width="1.6" stroke-linejoin="round"/>
         </svg>
-        AWX VPN
+        <span class="brand-name">AWX VPN</span>
       </a>
       <div class="nav-links">
         <a href="index.html#features">Возможности</a>
@@ -436,9 +436,9 @@
       <div class="footer-links">
         <a href="privacy.html">Политика конфиденциальности</a>
         <a href="terms.html">Пользовательское соглашение</a>
-        <a href="mailto:support@awxvpn.com">Поддержка</a>
+        <a id="support-link" href="mailto:support@awxvpn.com">Поддержка</a>
       </div>
-      <div class="footer-copy">© 2026 AWX VPN</div>
+      <div id="footer-copy" class="footer-copy">© 2026 AWX VPN</div>
     </div>
   </div>
 </footer>
@@ -1017,7 +1017,7 @@ function renderTrialBanner(data) {
     banner.innerHTML = `
       <div class="trial-card">
         <div>
-          <div class="trial-title">Попробуйте AWX VPN бесплатно</div>
+          <div class="trial-title"><span class="brand-trial">Попробуйте AWX VPN бесплатно</span></div>
           <div class="trial-desc">${escapeHtml(gb)} ГБ трафика · ${escapeHtml(days)} ${dayWord(days)} без оплаты</div>
         </div>
         <div class="trial-actions">
@@ -1617,9 +1617,38 @@ function injectTelegramWidget(containerId, username) {
 async function initTelegramWidget() {
   try {
     const cfg = await apiFetch('/api/config');
-    if (!cfg || !cfg.telegram_bot_username) return;
+    if (!cfg) return;
+    if (cfg.branding) applyBranding(cfg.branding);
+    if (!cfg.telegram_bot_username) return;
     injectTelegramWidget('telegram-login-box', cfg.telegram_bot_username);
   } catch (e) { /* Telegram-вход недоступен — просто не показываем кнопку */ }
+}
+
+// Применение брендинга из админки (название, акцентный цвет, поддержка).
+function applyBranding(b) {
+  if (!b) return;
+  const name = b.site_name || 'AWX VPN';
+  document.title = document.title.replace(/^[^—–-]+/, name) || name + ' — Личный кабинет';
+  document.querySelectorAll('.brand-name').forEach(el => { el.textContent = name; });
+  const trial = document.querySelector('.brand-trial');
+  if (trial) trial.textContent = trial.textContent.replace(/AWX VPN/, name);
+  const copy = document.getElementById('footer-copy');
+  if (copy) copy.textContent = '© ' + (new Date().getFullYear()) + ' ' + name;
+  const support = document.getElementById('support-link');
+  if (support && b.support_contact) {
+    support.href = /^[^@]+@[^@]+$/.test(b.support_contact) ? 'mailto:' + b.support_contact : b.support_contact;
+  }
+  if (b.accent_color) {
+    document.documentElement.style.setProperty('--accent', b.accent_color);
+    document.documentElement.style.setProperty('--accent-bg', hexToRgba(b.accent_color, 0.10));
+  }
+}
+
+function hexToRgba(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return 'rgba(0,0,0,0.08)';
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${alpha})`;
 }
 
 // Колбэк виджета. Вход (auth-section) или привязка (модалка в ЛК, window._tgBind).

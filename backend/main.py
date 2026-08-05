@@ -1059,6 +1059,7 @@ async def api_config():
     return {
         "demo_mode": settings.demo_mode,
         "telegram_bot_username": settings.telegram_bot_username,
+        "branding": settings.branding,
     }
 
 
