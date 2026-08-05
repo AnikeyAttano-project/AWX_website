@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/account", tags=["account"])
 referral_router = APIRouter(prefix="/api/referral", tags=["referral"])
 
+
+class RenameSubscriptionRequest(BaseModel):
+    name: str
+
+
+class AddonRequest(BaseModel):
+    addon_type: str  # "devices_5" | "devices_10"
+
 @router.get("/subscriptions")
 async def get_subscriptions(user: dict = Depends(get_optional_user)):
     """Список подписок пользователя. Требует авторизации."""
@@ -621,11 +629,3 @@ async def api_referral_apply(code: str, user: dict = Depends(get_current_user)):
         "already_applied": not ok,
         "referrer_id": referrer["id"],
     }
-
-
-class RenameSubscriptionRequest(BaseModel):
-    name: str
-
-
-class AddonRequest(BaseModel):
-    addon_type: str  # "devices_5" | "devices_10"
