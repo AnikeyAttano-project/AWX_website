@@ -249,6 +249,48 @@ async def get_client_info(email: str) -> dict:
     return data["obj"]["client"]  # содержит limitIp, expiryTime, enable, total и т.д.
 
 
+def _build_client_update_payload(current: dict, email: str) -> dict:
+    """Собирает payload для POST /clients/update/{email} из текущей модели клиента.
+
+    Нельзя слать модель панели «как есть»: в некоторых версиях 3x-UI поля
+    вроде allowedIPs возвращаются СТРОКОЙ, тогда как Go-модель при update
+    ждёт []string — панель отвечает "cannot unmarshal string into Go struct
+    field Client.allowedIPs of type []string". Поэтому собираем payload из
+    известных полей (как в ТГ-боте: _build_client_payload_from_record),
+    не передавая служебные поля (allowedIPs, up, down, clientStats и т.п.).
+
+    В /clients/get поле id — числовой DB-ключ; настоящий UUID лежит в uuid.
+    Для update id должен быть UUID (как у бота).
+    """
+    uuid_value = current.get("uuid")
+    record_id = current.get("id")
+    if not uuid_value and isinstance(record_id, str):
+        uuid_value = record_id
+
+    payload = {
+        "email": current.get("email") or email,
+        "security": current.get("security", "auto"),
+        "limitIp": current.get("limitIp", 1),
+        "totalGB": current.get("totalGB", 0),
+        "expiryTime": current.get("expiryTime", 0),
+        "enable": current.get("enable", True),
+        "tgId": current.get("tgId", 0),
+        "subId": current.get("subId", ""),
+        "comment": current.get("comment", ""),
+        "reset": current.get("reset", 0),
+    }
+    if uuid_value:
+        payload["id"] = uuid_value
+    for field in ("password", "auth", "flow", "secret", "adTag"):
+        value = current.get(field)
+        if value:
+            payload[field] = value
+    reverse = current.get("reverse")
+    if reverse:
+        payload["reverse"] = reverse
+    return {k: v for k, v in payload.items() if v != ""}
+
+
 async def update_client_limit(email: str, new_limit_ip: int) -> dict:
     """Обновляет limit_ip клиента в 3x-UI. Защищено per-email lock от TOCTOU."""
     _require_managed_email(email)
@@ -272,12 +314,15 @@ async def _update_client_limit_unlocked(email: str, new_limit_ip: int) -> dict:
         raise XuiError(f"Cannot find client {email}")
 
     current = data["obj"]["client"]
-    current.pop("id", None)
-    current["limitIp"] = new_limit_ip
+
+    # Собираем payload из известных полей (не allowedIPs и прочие служебные),
+    # иначе в некоторых версиях 3x-UI update падает на unmarshal allowedIPs.
+    payload = _build_client_update_payload(current, email)
+    payload["limitIp"] = new_limit_ip
 
     resp = await client.post(
         f"{settings.xui_base_url}/panel/api/clients/update/{email}",
-        json=current, headers=_headers(),
+        json=payload, headers=_headers(),
     )
 
     if resp.status_code != 200:
@@ -293,7 +338,9 @@ async def _update_client_limit_unlocked(email: str, new_limit_ip: int) -> dict:
 async def renew_client(email: str, add_days: int) -> dict:
     """
     Продлевает подписку. POST /update/{email} требует ПОЛНУЮ модель клиента,
-    а не патч — поэтому сначала читаем текущую.
+    а не патч — поэтому сначала читаем текущую и пересобираем из известных
+    полей (_build_client_update_payload), не передавая служебные поля вроде
+    allowedIPs, на которых падает 3x-UI ("cannot unmarshal string into []string").
 
     Продление идёт от текущей даты истечения (max(current_expiry, now)).
     Защищено per-email lock от TOCTOU.
@@ -322,10 +369,6 @@ async def _renew_client_unlocked(email: str, add_days: int) -> dict:
 
     current = data["obj"]["client"]
 
-    # Удаляем числовой id (DB primary key) — Go model.Client.id это string (UUID),
-    # иначе JSON unmarshal молча падает с "cannot unmarshal number into string"
-    current.pop("id", None)
-
     # 2. Вычисляем новый expiryTime
     now_ms = int(time.time() * 1000)
     current_exp = int(current.get("expiryTime", 0) or 0)
@@ -333,13 +376,17 @@ async def _renew_client_unlocked(email: str, add_days: int) -> dict:
     # Если подписка ещё активна — продлеваем от текущей даты
     # Если истекла — от сейчас
     base = max(current_exp, now_ms)
-    current["expiryTime"] = base + add_days * 86400 * 1000
-    current["enable"] = True
 
-    # 3. Отправляем ПОЛНУЮ модель
+    # 3. Собираем payload из известных полей (НЕ allowedIPs и прочие служебные),
+    # иначе в некоторых версиях 3x-UI update падает на unmarshal allowedIPs.
+    payload = _build_client_update_payload(current, email)
+    payload["expiryTime"] = base + add_days * 86400 * 1000
+    payload["enable"] = True
+
+    # 4. Отправляем обновлённую модель
     resp = await client.post(
         f"{settings.xui_base_url}/panel/api/clients/update/{email}",
-        json=current, headers=_headers(),
+        json=payload, headers=_headers(),
     )
 
     if resp.status_code != 200:
