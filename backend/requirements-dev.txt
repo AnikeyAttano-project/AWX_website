@@ -1,0 +1,3 @@
+# Dev/test dependencies (НЕ входят в requirements.txt продакшена)
+# Установка: venv\Scripts\pip install -r requirements-dev.txt
+pytest>=8.0.0

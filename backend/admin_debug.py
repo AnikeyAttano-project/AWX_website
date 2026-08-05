@@ -394,7 +394,7 @@ async def debug_mock_success(req: MockPaymentRequest,
         await create_order(new_order_id, req.tariff_slug, tariff["price"])
         await set_order_user(new_order_id, req.user_id)
         await mark_paid(new_order_id)  # is_mock не персистится отдельным полем — фиксируется в audit-логе
-        from main import fulfill_order  # лениво — избегаем циклического импорта main↔admin
+        from shared_state import fulfill_order  # лениво — избегаем циклического импорта
         await fulfill_order(new_order_id)  # реальный вызов провижининга в 3x-UI — НЕ мок
         result = {"order_id": new_order_id}
     else:
@@ -410,7 +410,7 @@ async def debug_mock_success(req: MockPaymentRequest,
         await create_device_addon(addon_id, req.user_id, req.order_id, req.purchase_type,
                                   addon_cfg["extra_devices"], addon_cfg["base_price"],
                                   order.get("expires_at", ""), platega_tx_id="mock")
-        from main import fulfill_addon  # лениво
+        from shared_state import fulfill_addon  # лениво
         await fulfill_addon(addon_id)  # реальная активация + реальный update_client_limit
         result = {"addon_id": addon_id}
 
@@ -526,7 +526,7 @@ async def debug_simulate_renew(req: RenewSimRequest,
         raise HTTPException(404, "Заказ не найден")
     user = await require_test_account_or_confirmation(order["user_id"], req.confirm_email)
 
-    from main import _renew_subscription_core  # лениво
+    from shared_state import _renew_subscription_core  # лениво
     result = await _renew_subscription_core(req.order_id, order)
 
     await log_debug_action(x_admin_name, "simulate_renew", order["user_id"],

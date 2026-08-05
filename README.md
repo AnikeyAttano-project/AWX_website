@@ -207,7 +207,8 @@ sequenceDiagram
 |---|---|---|
 | `GET` | `/subscriptions` | Список подписок |
 | `GET` | `/subscription/{id}` | Детали подписки + QR |
-| `POST` | `/renew/{id}` | Продление подписки |
+| `POST` | `/renew/{id}` | Платное продление: создаёт заявку `renewals` + платёж → `payment_url` |
+| `GET` | `/renewal/{id}/status` | Polling статуса продления после оплаты |
 | `POST` | `/subscription/{id}/rekey` | Перевыпуск ключа (сохраняет остаток времени) |
 | `POST` | `/subscription/{id}/rename` | Переименование подписки |
 | `GET` | `/subscription/{id}/stats` | Статистика ключа (трафик, лимит, даты) |
@@ -251,6 +252,9 @@ sequenceDiagram
 | `GET` | `/settings/export` | Экспорт всех настроек в JSON (бэкап) |
 | `POST` | `/settings/import` | Импорт настроек из JSON (с валидацией) |
 | `POST` | `/settings/payment` | Выбор активной платёжки + настройки ЮKassa |
+| `GET` | `/analytics/funnel` | Воронка `order_create → order_paid → fulfill` по дням (конверсии в %) |
+| `GET` | `/analytics/by-tariff` | Оплаченные заказы по тарифам: количество и выручка |
+| `GET` | `/analytics/anomalies` | Эвристика злоупотреблений: `renew` >3 за 7 дней, `addon_purchase` >5 за день |
 
 ## Вебхуки платёжных систем
 
@@ -437,6 +441,29 @@ DEBUG_SANDBOX_ENABLED=true
 
 ---
 
+## 🧪 Автотесты (pytest)
+
+Ключевые сценарии биллинга покрыты тестами: add-ons и продления **не активируются
+без подтверждения оплаты**, продления работают с мок-провайдером, webhook для
+продления не роняет обработчик, выдача идемпотентна, управляемые email'ы защищены,
+гонка двух параллельных fulfill выдаёт ключ ровно один раз.
+
+Как гонять:
+
+```bash
+cd backend
+venv\Scripts\pip install -r requirements-dev.txt   # pytest (в первый раз)
+venv\Scripts\python.exe -m pytest tests/ -v
+```
+
+Тесты используют **отдельную временную БД** и моки всех сетевых вызовов
+(3x-UI / Platega) — реальные платежи и панель не затрагиваются. Env-переменные
+выставляются в `tests/conftest.py` **до импорта** `main`, т.к. `config` читается
+на import-time. Мок провайдера патчится в модуле, где функция используется
+(`payment_lifecycle.get_provider`), а не в модуле, откуда она определена.
+
+---
+
 ## 🔐 Безопасность
 
 1. **Bearer-токен 3x-UI** — храните в `.env`, никогда не коммитьте
@@ -448,8 +475,8 @@ DEBUG_SANDBOX_ENABLED=true
 7. **Демо-пароль** — доступ к демо-подписке защищён паролем (`DEMO_PASSWORD`), можно скрыть через админку
 8. **Real IP** — корректное определение IP за прокси (`X-Forwarded-For` / `X-Real-IP`)
 9. **Capability-токен** — доступ к статусу заказа через `?token=...` (без токена — ключ не отдаётся)
-10. **Renew rate-limit** — продление подписки не чаще 1 раза в сутки, после 70% срока
-11. **asyncio.Lock** — защита `fulfill_order` и `fulfill_addon` от параллельных вызовов
+10. **Платное продление** — продление подписки через отдельную оплату (заявка `renewals` + платёж), никаких rate-limit'ов в 1/сутки и «после 70%» — кнопка активна всегда (кроме удалённых подписок)
+11. **PaymentLifecycle** — единый паттерн pending → confirm → fulfill для заказов/add-ons/продлений; `confirm_and_fulfill` активирует только при подтверждённой оплате, per-entity `asyncio.Lock` защищает от гонок
 12. **Webhook idempotent** — `check_status()` вызывается 1 раз, addon-first поиск, корректные возвраты
 13. **Дебаг-песочница изолирована** — флаг `DEBUG_SANDBOX_ENABLED` (router-level 404), обязательный `X-Admin-Name`, `confirm_email` для реальных аккаунтов, двухшаговый force-sync, audit-лог, без импортов `platega_client`
 
@@ -546,7 +573,16 @@ AWX-WEB-lite/
 │   ├── pricing.py            # Формула proration (единый источник правды)
 │   ├── xui_client.py         # Клиент 3x-UI API
 │   ├── platega_client.py     # Клиент Platega API
-│   └── main.py               # FastAPI приложение
+│   ├── payment_providers.py  # Абстракция платёжных систем (Platega/YooKassa)
+│   ├── payment_lifecycle.py  # Единый паттерн pending→confirm→fulfill (Часть 1)
+│   ├── shared_state.py       # Общие хелперы + инстансы PaymentLifecycle (Часть 4)
+│   ├── routers/              # Эндпоинты по доменам (Часть 4)
+│   │   ├── orders.py         #   витрина и /api/order/*
+│   │   ├── account.py        #   /api/account/* и /api/referral/*
+│   │   ├── webhook.py        #   /webhook/platega, /webhook/yookassa
+│   │   └── pages.py          #   /payment/success, /payment/failed
+│   ├── tests/                # Автотесты pytest (Часть 3)
+│   └── main.py               # FastAPI приложение (только app + include_router)
 ├── frontend/
 │   ├── index.html            # Лендинг (витрина)
 │   ├── account.html          # Личный кабинет

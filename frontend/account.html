@@ -962,7 +962,7 @@ function renderSubscriptions(subs) {
         <div class="sub-actions">
           ${hasKey ? `
           <button data-action="show-key" data-id="${escapeHtml(sub.id)}" class="btn btn-dark">${ICONS.key}Показать ключ</button>` : ''}
-          ${si.status === 'active' ? `
+          ${si.status !== 'deleted' && hasKey ? `
           <button data-action="renew" data-id="${escapeHtml(sub.id)}" class="btn btn-outline">${ICONS.renew}Продлить</button>` : ''}
           ${hasKey ? `
           <button data-action="rekey" data-id="${escapeHtml(sub.id)}" class="btn btn-outline" title="Перевыпустить ключ">${ICONS.renew}Перевыпустить</button>
@@ -1143,6 +1143,13 @@ async function renewSubscription(id, btn) {
   try {
     const data = await apiFetch('/api/account/renew/' + encodeURIComponent(id), { method: 'POST' });
     if (data && data.payment_url) {
+      // Платное продление: запоминаем заявку и редиректим на оплату.
+      // После возврата в ЛК pollPendingRenewal() опросит статус.
+      if (data.renewal_id) {
+        try {
+          sessionStorage.setItem('pendingRenewal', JSON.stringify({ renewal_id: data.renewal_id, order_id: id }));
+        } catch (e) { /* sessionStorage недоступен — пропускаем polling */ }
+      }
       window.location.href = data.payment_url;
       return;
     }
@@ -1157,6 +1164,45 @@ async function renewSubscription(id, btn) {
       btn.innerHTML = original;
     }
   }
+}
+
+// Polling статуса платного продления после возврата с оплаты
+// (тот же UX, что у покупки add-on: редирект → возврат → опрос статуса).
+async function pollPendingRenewal() {
+  let raw;
+  try { raw = sessionStorage.getItem('pendingRenewal'); } catch (e) { return; }
+  if (!raw) return;
+  let pending;
+  try { pending = JSON.parse(raw); } catch (e) { try { sessionStorage.removeItem('pendingRenewal'); } catch (_) {} return; }
+  if (!pending || !pending.renewal_id) return;
+
+  const renewalId = pending.renewal_id;
+  const maxAttempts = 20; // ~40 секунд
+  let finalStatus = null;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const data = await apiFetch(`/api/account/renewal/${encodeURIComponent(renewalId)}/status`);
+      const status = data && data.status;
+      if (status && status !== 'pending') {
+        finalStatus = status;
+        break;
+      }
+    } catch (e) {
+      // Ещё не готов / сеть — просто ждём следующую итерацию
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  try { sessionStorage.removeItem('pendingRenewal'); } catch (e) {}
+
+  if (finalStatus === 'active') {
+    showToast('Подписка успешно продлена 🎉');
+  } else if (finalStatus === 'failed') {
+    showToast('Продление не удалось. Попробуйте ещё раз.', 'error');
+  } else {
+    showToast('Статус оплаты уточняется. Если платёж прошёл — подписка уже продлена.');
+  }
+  await loadSubscriptions();
 }
 
 // ————————————————— СТАТИСТИКА —————————————————
@@ -1745,6 +1791,8 @@ async function init() {
   initTelegramWidget();
   if (getToken()) {
     await enterDashboard();
+    // Если вернулись с оплаты продления — опрашиваем его статус
+    pollPendingRenewal();
     // Автоприменение реферального кода для уже авторизованных пользователей
     const params = new URLSearchParams(window.location.search);
     const refCode = params.get('ref');

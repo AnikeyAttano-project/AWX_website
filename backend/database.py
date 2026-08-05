@@ -125,6 +125,20 @@ CREATE TABLE IF NOT EXISTS promo_codes (
     is_active       INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS renewals (
+    id              TEXT PRIMARY KEY,
+    order_id        TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    days            INTEGER NOT NULL,
+    amount          REAL NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',    -- pending | active | failed | cancelled
+    platega_tx_id   TEXT,
+    provider        TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (order_id) REFERENCES orders(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
 """
 
 
@@ -287,6 +301,13 @@ async def init_db():
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)"
+        )
+        # Индексы для платных продлений (renewals)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_renewals_order ON renewals(order_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_renewals_tx ON renewals(platega_tx_id)"
         )
         # Индексы для дебаг-аудита
         await db.execute(
@@ -653,6 +674,107 @@ async def prune_site_log(keep: int = 5000) -> int:
         )
         await db.commit()
         return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
+# ————————————————— АНАЛИТИКА (витрина на основе site_log) —————————————————
+# Все агрегации — SQL GROUP BY, без загрузки таблиц в Python.
+
+async def get_analytics_funnel(days: int = 7) -> dict:
+    """
+    Воронка продаж за последние `days` дней, по дням:
+    order_create → order_paid → fulfill.
+
+    order_create/fulfill берутся из site_log; order_paid — из orders.paid_at
+    (отдельного события в логе нет — оплата помечается напрямую в таблице).
+    """
+    window = f"-{days} days"
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+
+        async def _group(sql: str, param: str) -> dict[str, int]:
+            cur = await db.execute(sql, (param,))
+            return {r["d"]: r["n"] for r in await cur.fetchall()}
+
+        create_rows = await _group(
+            "SELECT date(ts) AS d, COUNT(*) AS n FROM site_log "
+            "WHERE action = 'order_create' AND ts >= datetime('now', ?) "
+            "GROUP BY date(ts)", window)
+        paid_rows = await _group(
+            "SELECT date(paid_at) AS d, COUNT(*) AS n FROM orders "
+            "WHERE paid_at IS NOT NULL AND paid_at >= datetime('now', ?) "
+            "GROUP BY date(paid_at)", window)
+        fulfill_rows = await _group(
+            "SELECT date(ts) AS d, COUNT(*) AS n FROM site_log "
+            "WHERE action = 'fulfill' AND ts >= datetime('now', ?) "
+            "GROUP BY date(ts)", window)
+
+    all_dates = sorted(set(create_rows) | set(paid_rows) | set(fulfill_rows))
+    rows = []
+    for d in all_dates:
+        c = create_rows.get(d, 0)
+        p = paid_rows.get(d, 0)
+        f = fulfill_rows.get(d, 0)
+        rows.append({
+            "date": d,
+            "order_create": c,
+            "order_paid": p,
+            "fulfill": f,
+            "conv_create_to_paid": round(p / c * 100, 1) if c else 0,
+            "conv_paid_to_fulfill": round(f / p * 100, 1) if p else 0,
+        })
+
+    tc = sum(create_rows.values())
+    tp = sum(paid_rows.values())
+    tf = sum(fulfill_rows.values())
+    return {
+        "days": days,
+        "rows": rows,
+        "totals": {
+            "order_create": tc,
+            "order_paid": tp,
+            "fulfill": tf,
+            "conv_create_to_paid": round(tp / tc * 100, 1) if tc else 0,
+            "conv_paid_to_fulfill": round(tf / tp * 100, 1) if tp else 0,
+            "conv_overall": round(tf / tc * 100, 1) if tc else 0,
+        },
+    }
+
+
+async def get_analytics_by_tariff(days: int = 30) -> list[dict]:
+    """Оплаченные заказы за последние `days` дней по тарифам: количество и выручка."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT tariff, COUNT(*) AS cnt, ROUND(SUM(amount), 2) AS revenue "
+            "FROM orders "
+            "WHERE paid_at IS NOT NULL AND paid_at >= datetime('now', ?) "
+            "GROUP BY tariff ORDER BY revenue DESC, cnt DESC",
+            (f"-{days} days",),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_analytics_anomalies() -> dict:
+    """
+    Простая эвристика злоупотреблений/багов:
+      - renew_heavy: >3 платных продлений за 7 дней на одного actor;
+      - addon_burst: >5 покупок add-on за один день на одного actor.
+    """
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT actor, COUNT(*) AS cnt FROM site_log "
+            "WHERE action = 'renew' AND ts >= datetime('now', '-7 days') "
+            "GROUP BY actor HAVING COUNT(*) > 3 ORDER BY cnt DESC",
+        )
+        renew_heavy = [dict(r) for r in await cur.fetchall()]
+        cur = await db.execute(
+            "SELECT actor, date(ts) AS day, COUNT(*) AS cnt FROM site_log "
+            "WHERE action = 'addon_purchase' AND ts >= datetime('now', '-7 days') "
+            "GROUP BY actor, date(ts) HAVING COUNT(*) > 5 ORDER BY cnt DESC",
+        )
+        addon_burst = [dict(r) for r in await cur.fetchall()]
+    return {"renew_heavy": renew_heavy, "addon_burst": addon_burst}
 
 
 # ————————————————— ПРОМО-КОДЫ (promo_codes) —————————————————
@@ -1294,6 +1416,75 @@ async def get_total_extra_devices(order_id: str) -> int:
         )
         row = await cur.fetchone()
         return row[0] if row else 0
+
+
+# ————————————————— Платные продления (renewals) —————————————————
+# Та же схема, что и у add-ons: create_* → get_*_by_id / get_*_by_tx →
+# activate_* (pending → active). Переиспользуется PaymentLifecycle'ом
+# (Часть 1), чтобы порядок pending → confirm → fulfill не нарушался.
+
+async def create_renewal(renewal_id: str, order_id: str, user_id: str,
+                         days: int, amount: float, platega_tx_id: str = "",
+                         provider: str = ""):
+    async with _db() as db:
+        await db.execute(
+            "INSERT INTO renewals (id, order_id, user_id, days, amount, "
+            "status, platega_tx_id, provider) VALUES "
+            "(?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (renewal_id, order_id, user_id, days, amount, platega_tx_id, provider),
+        )
+        await db.commit()
+
+
+async def get_renewal_by_id(renewal_id: str) -> dict | None:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM renewals WHERE id = ?", (renewal_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_renewal_by_tx(tx_id: str) -> dict | None:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM renewals WHERE platega_tx_id = ?", (tx_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_pending_renewal_for_order(order_id: str) -> dict | None:
+    """Действующая (pending) заявка на продление — защита от двойного клика."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM renewals WHERE order_id = ? AND status = 'pending' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (order_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def activate_renewal(renewal_id: str):
+    """pending → active. Идемпотентно: повторный вызов ничего не меняет."""
+    async with _db() as db:
+        await db.execute(
+            "UPDATE renewals SET status = 'active' WHERE id = ? AND status = 'pending'",
+            (renewal_id,),
+        )
+        await db.commit()
+
+
+async def set_renewal_status(renewal_id: str, status: str):
+    """Принудительно сменить статус (failed/cancelled) — для учёта ошибок
+    провижининга и отменённых/протухших платежей."""
+    async with _db() as db:
+        await db.execute(
+            "UPDATE renewals SET status = ? WHERE id = ?", (status, renewal_id)
+        )
+        await db.commit()
 
 
 # ————————————————— Debug Sandbox —————————————————

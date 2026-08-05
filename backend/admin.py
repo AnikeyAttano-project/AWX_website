@@ -40,6 +40,7 @@ from database import (
     get_user_subscriptions, mark_order_deleted, set_devices_admin_addon,
     add_site_log, get_site_logs,
     create_promo_code, list_promo_codes, delete_promo_code, toggle_promo_code,
+    get_analytics_funnel, get_analytics_by_tariff, get_analytics_anomalies,
 )
 from xui_client import _parse_inbound_ids
 
@@ -967,7 +968,7 @@ async def update_demo(enabled: bool = Query(...)):
 @admin_router.post("/cleanup")
 async def admin_cleanup():
     """Ручной запуск очистки устаревших записей (>14 дней после окончания)."""
-    from main import cleanup_expired_subscriptions
+    from shared_state import cleanup_expired_subscriptions
     await cleanup_expired_subscriptions()
     return {"ok": True, "message": "Cleanup completed. Check server logs for details."}
 
@@ -1004,3 +1005,29 @@ async def admin_logs_download(limit: int = Query(200, ge=10, le=5000)):
         media_type="text/plain",
         headers={"Content-Disposition": 'attachment; filename="site_logs.txt"'},
     )
+
+
+# ————————————————— АНАЛИТИКА (витрина на основе site_log) —————————————————
+
+@admin_router.get("/analytics/funnel")
+async def analytics_funnel(days: int = Query(7, ge=1, le=90)):
+    """
+    Воронка: order_create → order_paid → fulfill, по дням, за последние `days`
+    дней. Конверсия в процентах на каждом переходе.
+    """
+    return await get_analytics_funnel(days)
+
+
+@admin_router.get("/analytics/by-tariff")
+async def analytics_by_tariff(days: int = Query(30, ge=1, le=365)):
+    """Разбивка оплаченных заказов по тарифам — количество и выручка."""
+    return await get_analytics_by_tariff(days)
+
+
+@admin_router.get("/analytics/anomalies")
+async def analytics_anomalies():
+    """
+    Простая эвристика: пользователи с аномально частым 'renew' (>3 за 7 дней)
+    или 'addon_purchase' (>5 за день) — потенциальные баги или злоупотребления.
+    """
+    return await get_analytics_anomalies()
