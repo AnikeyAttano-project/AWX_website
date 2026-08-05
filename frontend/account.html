@@ -1574,10 +1574,36 @@ window.addEventListener('scroll', () => {
 
 // ————————————————— ВХОД ЧЕРЕЗ TELEGRAM —————————————————
 
+// ЕДИНЫЙ инстанс виджета: Telegram-виджет не любит, когда на странице создают
+// второй динамический script с data-telegram-login (часто не рендерится).
+// Поэтому script инжектится ОДИН раз (флаг _tgWidgetInjected), а созданный
+// iframe ПЕРЕНОСИТСЯ между формой логина и модалкой привязки.
+let _tgWidgetInjected = false;
+let _tgWidgetEl = null;
+
+function _tgFindWidget() {
+  if (_tgWidgetEl && _tgWidgetEl.isConnected) return _tgWidgetEl;
+  for (const id of ['telegram-login-box', 'tg-bind-box']) {
+    const box = document.getElementById(id);
+    if (!box) continue;
+    const el = box.querySelector('iframe');
+    if (el) { _tgWidgetEl = el; return el; }
+  }
+  return null;
+}
+
+function _tgMoveWidgetTo(boxId) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  const w = _tgFindWidget();
+  if (w && !box.contains(w)) box.appendChild(w);
+}
+
 function injectTelegramWidget(containerId, username) {
+  if (_tgWidgetInjected) return;  // один инстанс на страницу
   const box = document.getElementById(containerId);
-  if (!box || box.dataset.tgLoaded) return;
-  box.dataset.tgLoaded = '1';
+  if (!box) return;
+  _tgWidgetInjected = true;
   const s = document.createElement('script');
   s.async = true;
   s.src = 'https://telegram.org/js/telegram-widget.js?22';
@@ -1640,19 +1666,34 @@ async function openTelegramBindModal() {
   const modal = document.getElementById('tg-bind-modal');
   if (!modal) return;
   modal.classList.add('active');
-  document.getElementById('tg-bind-error').classList.add('hidden');
+  const errEl = document.getElementById('tg-bind-error');
+  errEl.classList.add('hidden');
+
+  let cfg = null;
+  try { cfg = await apiFetch('/api/config'); } catch (e) { /* ignore */ }
+
+  if (!cfg || !cfg.telegram_bot_username) {
+    errEl.textContent = 'Telegram не настроен на сервере (TELEGRAM_BOT_USERNAME пуст). Проверьте .env и перезапустите backend.';
+    errEl.classList.remove('hidden');
+    window._tgBind = false;
+    return;
+  }
+
   window._tgBind = true;
-  try {
-    const cfg = await apiFetch('/api/config');
-    if (cfg && cfg.telegram_bot_username) {
-      injectTelegramWidget('tg-bind-box', cfg.telegram_bot_username);
-    }
-  } catch (e) { /* ignore */ }
+
+  // Убеждаемся, что script виджета создан (в форме логина), затем переносим
+  // его iframe в модалку. Если iframe ещё грузится — пробуем чуть позже.
+  injectTelegramWidget('telegram-login-box', cfg.telegram_bot_username);
+  _tgMoveWidgetTo('tg-bind-box');
+  setTimeout(() => _tgMoveWidgetTo('tg-bind-box'), 350);
+  setTimeout(() => _tgMoveWidgetTo('tg-bind-box'), 900);
 }
 
 function closeTelegramBindModal() {
   const modal = document.getElementById('tg-bind-modal');
   if (modal) modal.classList.remove('active');
+  // Возвращаем виджет в форму логина, чтобы он работал и после выхода из ЛК.
+  _tgMoveWidgetTo('telegram-login-box');
   window._tgBind = false;
 }
 
