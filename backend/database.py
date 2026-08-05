@@ -1,6 +1,7 @@
 import json
 import random
 import uuid
+from datetime import datetime
 
 import aiosqlite
 from contextlib import asynccontextmanager
@@ -101,6 +102,15 @@ CREATE TABLE IF NOT EXISTS debug_audit_log (
     target_user_id  TEXT,
     details_json    TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS site_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              TEXT NOT NULL DEFAULT (datetime('now')),
+    level           TEXT NOT NULL DEFAULT 'info',
+    action          TEXT NOT NULL,
+    actor           TEXT,
+    details         TEXT
 );
 """
 
@@ -525,6 +535,90 @@ async def set_user_telegram(user_id: str, telegram_id) -> None:
             (str(telegram_id), user_id),
         )
         await db.commit()
+
+
+async def set_devices_admin_addon(order_id: str, user_id: str, extra_devices: int,
+                                  expires_at: str = None) -> None:
+    """Тестовый инструмент админки «Устройства»: приводит admin-аддон к нужному extra.
+
+    Реальные купленные addon'ы не трогаем — пересоздаём только ``devices_admin``
+    так, чтобы суммарный extra (реальные + admin) совпал с желаемым.
+    ``extra_devices`` — желаемый extra СВЕРХ базового лимита тарифа (реальные
+    addon'ы уже учтены в вызове). Если реальные уже покрывают — admin-аддон удаляется.
+    """
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(extra_devices), 0) AS s FROM device_addons "
+            "WHERE order_id = ? AND status IN ('active','pending') AND addon_type != 'devices_admin'",
+            (order_id,),
+        )
+        row = await cur.fetchone()
+        real_extra = row["s"] if row else 0
+        admin_extra = max(0, extra_devices - real_extra)
+
+        await db.execute(
+            "DELETE FROM device_addons WHERE order_id = ? AND addon_type = 'devices_admin'",
+            (order_id,),
+        )
+        if admin_extra > 0:
+            await db.execute(
+                "INSERT INTO device_addons (id, user_id, order_id, addon_type, extra_devices, "
+                "amount_paid, status, expires_at) VALUES (?, ?, ?, 'devices_admin', ?, 0, 'active', ?)",
+                (uuid.uuid4().hex[:12], user_id, order_id, admin_extra,
+                 expires_at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
+            )
+        await db.commit()
+
+
+# ————————————————— ОБЩИЙ ЛОГ ДЕЙСТВИЙ (site_log) —————————————————
+
+async def add_site_log(action: str, actor: str = None, level: str = "info",
+                       details: str = None) -> None:
+    """Пишет запись в общий лог действий сайта.
+
+    Никогда не бросает исключений (лог не должен ломать бизнес-логику):
+    при ошибке записи только логирует предупреждение.
+    """
+    try:
+        async with _db() as db:
+            await db.execute(
+                "INSERT INTO site_log (level, action, actor, details) VALUES (?, ?, ?, ?)",
+                (level, action, actor, details),
+            )
+            await db.commit()
+    except Exception:
+        pass
+
+
+async def get_site_logs(limit: int = 200) -> list[dict]:
+    """Возвращает последние ``limit`` записей site_log (свежие сверху)."""
+    limit = max(10, min(limit, 5000))
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM site_log ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def prune_site_log(keep: int = 5000) -> int:
+    """Удаляет записи site_log сверх ``keep``; возвращает число удалённых."""
+    async with _db() as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM (SELECT id FROM site_log ORDER BY id DESC LIMIT ?)",
+            (keep,),
+        )
+        row = await cur.fetchone()
+        count = row[0] if row else 0
+        cur = await db.execute(
+            "DELETE FROM site_log WHERE id NOT IN ("
+            "SELECT id FROM (SELECT id FROM site_log ORDER BY id DESC LIMIT ?))",
+            (keep,),
+        )
+        await db.commit()
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
 
 async def claim_trial(user_id: str, expires_at: str) -> bool:

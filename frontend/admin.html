@@ -203,6 +203,10 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 2v2M16 2v2M9 13l2-2-2-2M15 13l-2-2 2-2M12 15l-2 2 2 2 2-2-2-2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>
         Дебаг
       </button>
+      <button data-view="logs">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 2v6h6M9 13h6M9 17h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Логи
+      </button>
     </nav>
     <div class="sidebar-bottom">
       <button onclick="doLogout()" class="btn btn-ghost btn-block" style="justify-content:flex-start;gap:8px;">
@@ -384,6 +388,31 @@
         <div id="dbg-calc-out" style="margin-top:12px;"></div>
       </div>
     </div>
+
+    <!-- ====== LOGS ====== -->
+    <div id="view-logs" class="view hidden">
+      <div class="section-head"><h1>Общий лог действий</h1></div>
+      <div class="toolbar">
+        <div class="field" style="min-width:130px;">
+          <select id="logs-limit" onchange="loadLogs()">
+            <option value="100">Последние 100</option>
+            <option value="200" selected>Последние 200</option>
+            <option value="300">Последние 300</option>
+            <option value="500">Последние 500</option>
+            <option value="1000">Последние 1000</option>
+          </select>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="loadLogs()">Обновить</button>
+        <button class="btn btn-dark btn-sm" onclick="downloadLogs()">Скачать лог</button>
+        <span id="logs-total" style="font-size:13px;color:var(--text-3);"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th style="width:160px;">Время</th><th style="width:90px;">Уровень</th><th style="width:160px;">Действие</th><th style="width:120px;">Актор</th><th>Детали</th></tr></thead>
+          <tbody id="logs-tbody"></tbody>
+        </table>
+      </div>
+    </div>
   </main>
 </div>
 
@@ -485,6 +514,7 @@ function switchView(v){
   else if(v==='stats') loadStats();
   else if(v==='settings') loadSettings();
   else if(v==='debug') loadDebug();
+  else if(v==='logs') loadLogs();
 }
 
 // ====== DASHBOARD ======
@@ -627,6 +657,7 @@ async function loadKeys(page=1){
         <td style="white-space:nowrap;">
           ${status!=='deleted'?`
             <button class="btn btn-outline btn-sm" onclick="extendKey('${esc(k.id)}','${esc(k.tariff)}')">Продлить</button>
+            <button class="btn btn-outline btn-sm" onclick="setDevicesKey('${esc(k.id)}','${esc(k.tariff)}')">Устройства</button>
             <button class="btn btn-danger btn-sm" onclick="deleteKey('${esc(k.id)}')">Удалить</button>
           `:'<span style="color:var(--text-3);font-size:12px;">Удалён</span>'}
         </td>
@@ -654,6 +685,29 @@ async function confirmExtend(id){
   try{
     await api(`/admin/keys/${id}/extend`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})});
     toast('Ключ продлён на '+days+' дней');
+    closeModal();
+    loadKeys(keysPage);
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function setDevicesKey(id, tariff){
+  showModal(`
+    <h2>Лимит устройств</h2>
+    <p style="font-size:14px;color:var(--text-2);margin-bottom:16px;">Заказ: <strong>${esc(id)}</strong> (${esc(tariff)})</p>
+    <div class="field">
+      <label>Итоговое количество устройств</label>
+      <input type="number" id="devices-total" value="10" min="1" max="100">
+    </div>
+    <p style="font-size:12px;color:var(--text-3);margin-bottom:16px;">Задаёт лимит в 3x-UI и синхронизирует личный кабинет (тестовый инструмент).</p>
+    <button class="btn btn-dark btn-block" onclick="confirmSetDevices('${esc(id)}')">Применить</button>
+  `);
+}
+
+async function confirmSetDevices(id){
+  const total = parseInt(document.getElementById('devices-total').value)||0;
+  try{
+    const d = await api(`/admin/keys/${id}/devices`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({total_devices:total})});
+    toast('Лимит устройств: '+d.total_devices);
     closeModal();
     loadKeys(keysPage);
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
@@ -903,6 +957,41 @@ async function loadDebug(){
     if(paySel) paySel.innerHTML = '<option value="">—</option>'+opts;
     if(calcSel) calcSel.innerHTML = '<option value="">— (вручную)</option>'+opts;
   }catch(e){ /* настройки недоступны — селекты останутся пустыми */ }
+}
+
+// ====== ЛОГИ ======
+async function loadLogs(){
+  const limit = parseInt(document.getElementById('logs-limit')?.value)||200;
+  try{
+    const d = await api('/admin/logs?limit='+limit);
+    document.getElementById('logs-total').textContent = `${d.total} записей`;
+    const rows = d.items.map(r => {
+      const lvl = String(r.level||'info').toLowerCase();
+      const lvlColor = lvl==='error' ? 'var(--danger,#dc2626)' : (lvl==='warning' ? '#d97706' : 'var(--text-2)');
+      return `<tr>
+        <td style="font-size:12px;color:var(--text-2);white-space:nowrap;">${esc(r.ts)}</td>
+        <td style="font-size:12px;font-weight:600;color:${lvlColor};">${esc(lvl)}</td>
+        <td style="font-size:12px;font-weight:600;">${esc(r.action)}</td>
+        <td style="font-size:12px;">${esc(r.actor||'—')}</td>
+        <td style="font-size:12px;color:var(--text-2);word-break:break-all;">${esc(r.details||'')}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('logs-tbody').innerHTML = rows || '<tr><td colspan="5" class="tbl-empty">Лог пуст</td></tr>';
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+function downloadLogs(){
+  const limit = parseInt(document.getElementById('logs-limit')?.value)||200;
+  fetch(API_BASE + '/admin/logs/download?limit=' + limit, {headers:{'X-Admin-Key':adminKey}})
+    .then(r=>{ if(!r.ok) throw new Error('Error '+r.status); return r.blob(); })
+    .then(blob=>{
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'site_logs.txt';
+      document.body.appendChild(a); a.click();
+      setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 500);
+    })
+    .catch(e=>toast('Ошибка: '+e.message, 'error'));
 }
 
 // Модалка для разрушительного действия: всегда с явным полем confirm_email

@@ -396,7 +396,9 @@ async def _renew_client_unlocked(email: str, add_days: int) -> dict:
     if not data.get("success"):
         raise XuiError(f"3x-UI update error: {data.get('msg')}")
 
-    return {"email": email, "new_expiry_ms": current["expiryTime"]}
+    # ВАЖНО: возвращаем НОВЫЙ срок (payload["expiryTime"]), а не current["expiryTime"]
+    # (старый, немодифицированный) — иначе панель продлевается, а в БД пишется старая дата.
+    return {"email": email, "new_expiry_ms": payload["expiryTime"]}
 
 
 async def check_client_status(email: str) -> dict:

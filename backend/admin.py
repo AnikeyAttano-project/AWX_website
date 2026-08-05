@@ -28,7 +28,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 
 import aiosqlite
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from config import settings
@@ -36,7 +36,8 @@ from database import (
     _db,
     get_order, save_settings_value,
     set_user_blocked, count_users, list_users_page, get_user_by_id,
-    get_user_subscriptions, mark_order_deleted,
+    get_user_subscriptions, mark_order_deleted, set_devices_admin_addon,
+    add_site_log, get_site_logs,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,10 @@ admin_router = APIRouter(
 
 class ExtendKeyRequest(BaseModel):
     days: int = Field(ge=1, le=3650, description="Days to add")
+
+
+class SetKeyDevicesRequest(BaseModel):
+    total_devices: int = Field(5, ge=1, le=100, description="Итоговый лимит устройств (базовый + доп.)")
 
 
 class TariffItem(BaseModel):
@@ -381,7 +386,57 @@ async def extend_key(order_id: str, req: ExtendKeyRequest):
         )
         await db.commit()
 
+    await add_site_log("admin_extend", actor="admin",
+                       details=f"order={order_id} days={req.days} new_expires={new_expires}")
     return {"ok": True, "new_expires_at": new_expires}
+
+
+@admin_router.post("/keys/{order_id}/devices")
+async def set_key_devices(order_id: str, req: SetKeyDevicesRequest):
+    """Тестовый инструмент: задаёт итоговый лимит устройств ключа в 3x-UI.
+
+    Синхронизирует admin-аддон (devices_admin), чтобы личный кабинет показывал
+    тот же итоговый лимит, что и панель. Реальные купленные addon'ы не трогает.
+    """
+    order = await get_order(order_id)
+    if not order:
+        raise HTTPException(404, "Order not found")
+    if not order.get("xui_email"):
+        raise HTTPException(400, "No 3x-UI client linked to this order")
+
+    tariff = settings.tariffs.get(order["tariff"])
+    base_devices = tariff.get("devices", 5) if tariff else 5
+    if req.total_devices < base_devices:
+        raise HTTPException(
+            400,
+            f"Нельзя меньше базового лимита тарифа ({base_devices} устройств)",
+        )
+
+    from xui_client import update_client_limit, XuiError
+
+    try:
+        await update_client_limit(order["xui_email"], req.total_devices)
+    except XuiError as e:
+        logger.error("Set devices failed for %s: %s", order_id, e)
+        raise HTTPException(502, f"Panel error: {e}")
+
+    await set_devices_admin_addon(
+        order_id,
+        order.get("user_id") or "",
+        req.total_devices - base_devices,
+        order.get("expires_at"),
+    )
+
+    await add_site_log("admin_set_devices", actor="admin",
+                       details=f"order={order_id} total_devices={req.total_devices} "
+                               f"(base={base_devices} extra={req.total_devices - base_devices})")
+
+    return {
+        "ok": True,
+        "total_devices": req.total_devices,
+        "base_devices": base_devices,
+        "extra_devices": req.total_devices - base_devices,
+    }
 
 
 @admin_router.post("/keys/{order_id}/delete")
@@ -598,3 +653,30 @@ async def admin_cleanup():
 @admin_router.post("/tariffs")
 async def legacy_update_tariffs(req: TariffUpdateRequest):
     return await update_tariffs(req)
+
+
+# -- Общий лог действий сайта --
+
+@admin_router.get("/logs")
+async def admin_logs(limit: int = Query(200, ge=10, le=5000)):
+    """Последние N записей общего лога действий сайта (свежие сверху)."""
+    items = await get_site_logs(limit)
+    return {"items": items, "total": len(items), "limit": limit}
+
+
+@admin_router.get("/logs/download")
+async def admin_logs_download(limit: int = Query(200, ge=10, le=5000)):
+    """Скачать лог действий сайта как текстовый файл."""
+    items = await get_site_logs(limit)
+    lines = [
+        f"{r['ts']} [{r['level'].upper()}] {r['action']} | actor={r['actor'] or '-'} | {r['details'] or ''}"
+        for r in items
+    ]
+    text = "Общий лог действий AWX-WEB-lite (последние %d записей)\n%s\n%s\n" % (
+        len(items), "-" * 70, "\n".join(lines),
+    )
+    return Response(
+        content=text,
+        media_type="text/plain",
+        headers={"Content-Disposition": 'attachment; filename="site_logs.txt"'},
+    )

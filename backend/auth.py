@@ -16,6 +16,7 @@ from database import (
     get_user_by_email, create_user, get_user_by_id, set_user_verified,
     get_user_by_referral_code, apply_referral_code, get_setting,
     get_user_by_telegram, create_telegram_user, set_user_telegram,
+    add_site_log,
 )
 from tg_auth import verify_telegram_auth, TelegramAuthError
 
@@ -111,6 +112,7 @@ async def register(req: RegisterRequest):
     password_hash = pwd_context.hash(req.password)
     verified = 0 if settings.email_verification_required else 1
     await create_user(user_id, req.email.lower().strip(), password_hash, verified=verified)
+    await add_site_log("register", actor=user_id, details=req.email.lower().strip())
 
     # Привязываем реферальный код, если указан при регистрации (не критично при ошибке)
     if req.referral_code and (await get_setting("referral_enabled", "1")) == "1":
@@ -165,6 +167,7 @@ async def login(req: LoginRequest):
     if user.get("blocked"):
         raise HTTPException(403, "Account blocked")
     token = create_token(user["id"])
+    await add_site_log("login", actor=user["id"], details=user["email"])
     return {
         "token": token,
         "user_id": user["id"],
@@ -233,6 +236,7 @@ async def telegram_login(payload: dict = Body(...)):
         raise HTTPException(403, "Account blocked")
 
     token = create_token(user["id"])
+    await add_site_log("telegram_login", actor=user["id"], details=user["email"])
     return {
         "token": token,
         "user_id": user["id"],
@@ -261,4 +265,5 @@ async def telegram_bind(payload: dict = Body(...), user: dict = Depends(get_curr
         raise HTTPException(409, "Этот Telegram уже привязан к другому аккаунту")
 
     await set_user_telegram(user["id"], tg_id)
+    await add_site_log("telegram_bind", actor=user["id"], details=f"tg_id={tg_id}")
     return {"ok": True, "telegram_id": tg_id}

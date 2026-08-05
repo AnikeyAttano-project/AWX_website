@@ -36,6 +36,7 @@ from database import (
     activate_addon, activate_pending_addons_for_order,
     cancel_pending_addon, finalize_addon_cancellation,
     get_addon_by_tx, get_addon_by_id, get_total_extra_devices,
+    add_site_log, prune_site_log,
 )
 from platega_client import create_payment, check_status, PlategaError
 from pricing import compute_addon_proration
@@ -148,6 +149,7 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(6 * 3600)  # 6 часов
             try:
                 await cleanup_expired_subscriptions()
+                await prune_site_log(keep=5000)  # держим общий лог в пределах 5000 записей
             except Exception as e:
                 logger.error("Periodic cleanup error: %s", e)
 
@@ -335,6 +337,8 @@ async def _renew_subscription_core(order_id: str, order: dict) -> dict:
             await db.commit()
         logger.info("Subscription renewed: order=%s user=%s days=%d",
                     order_id, order.get("user_id"), days)
+        await add_site_log("renew", actor=order.get("user_id"),
+                           details=f"order={order_id} days={days} new_expires={new_expires}")
         return {"ok": True, "new_expires_at": new_expires}
     except XuiError as e:
         logger.error("Renew failed for order %s: %s", order_id, e)
@@ -685,6 +689,8 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
             await update_client_limit(order["xui_email"], base_devices + extra)
         except XuiError as e:
             logger.error("Failed to update limit: %s", e)
+        await add_site_log("addon_purchase", actor=user["id"],
+                           details=f"order={order_id} addon={addon_id} type={req.addon_type} price=0")
         return {"ok": True, "addon_id": addon_id, "price_now": 0}
 
     try:
@@ -701,6 +707,8 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
                               addon_cfg["extra_devices"], price_now,
                               order.get("expires_at", ""), payment["transaction_id"])
 
+    await add_site_log("addon_purchase", actor=user["id"],
+                       details=f"order={order_id} addon={addon_id} type={req.addon_type} price={price_now}")
     return {"ok": True, "addon_id": addon_id, "payment_url": payment["payment_url"], "amount": price_now}
 
 
@@ -716,6 +724,8 @@ async def cancel_addon(order_id: str, user: dict = Depends(get_optional_user)):
     if not addon:
         raise HTTPException(404, "Нет активного add-on")
     await cancel_pending_addon(addon["id"])
+    await add_site_log("addon_cancel", actor=user["id"],
+                       details=f"order={order_id} addon={addon['id']} type={addon['addon_type']}")
     return {"ok": True, "message": "Доп. устройства будут отменены при следующем продлении"}
 
 
@@ -1031,6 +1041,10 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     # Привязываем заказ к пользователю, если авторизован
     if user:
         await set_order_user(order_id, user["id"])
+
+    await add_site_log("order_create", actor=(user["id"] if user else None),
+                       details=f"order={order_id} tariff={req.tariff} "
+                               f"addon={req.addon_type or 'none'} amount={total}")
 
     return {
         "order_id": order_id,
@@ -1393,12 +1407,17 @@ async def fulfill_order(order_id: str):
                     "Referral rewards failed for order %s: %s", order_id, e
                 )
 
+            await add_site_log("fulfill", actor=order.get("user_id"),
+                               details=f"order={order_id} email={email} devices={devices}")
+
         except XuiError as e:
             # Логируем ошибку, заказ переводим в 'error' (status) + 'failed'
             # (fulfillment_status) — выдача не удалась, но ретрай возможен.
             logger.error("XuiError for order %s: %s", order_id, e)
             await mark_order_error(order_id, str(e))
             await fail_fulfillment(order_id, str(e))
+            await add_site_log("fulfill_failed", actor=order.get("user_id"),
+                               level="error", details=f"order={order_id} {e}")
             return
         except Exception as e:
             logger.error("Unexpected error for order %s: %s", order_id, e)
