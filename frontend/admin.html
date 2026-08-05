@@ -199,6 +199,10 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="1.6"/></svg>
         Настройки
       </button>
+      <button data-view="promo">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7" cy="7" r="1.5" fill="currentColor"/></svg>
+        Промо
+      </button>
       <button data-view="debug">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 2v2M16 2v2M9 13l2-2-2-2M15 13l-2-2 2-2M12 15l-2 2 2 2 2-2-2-2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>
         Дебаг
@@ -293,6 +297,12 @@
     <div id="view-settings" class="view hidden">
       <div class="section-head"><h1>Настройки</h1></div>
       <div id="settings-content"></div>
+    </div>
+
+    <!-- ====== PROMO ====== -->
+    <div id="view-promo" class="view hidden">
+      <div class="section-head"><h1>Промокоды</h1></div>
+      <div id="promo-content"></div>
     </div>
 
     <!-- ====== DEBUG ====== -->
@@ -515,6 +525,7 @@ function switchView(v){
   else if(v==='settings') loadSettings();
   else if(v==='debug') loadDebug();
   else if(v==='logs') loadLogs();
+  else if(v==='promo') loadPromo();
 }
 
 // ====== DASHBOARD ======
@@ -821,9 +832,10 @@ async function loadSettings(){
   el.innerHTML = '<div style="text-align:center;padding:48px;"><div style="width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;"></div></div>';
   try{
     const d = await api('/admin/settings');
-    // Глобалы для редактора групп (инбаунды и slug'и тарифов из БД)
+    // Глобалы для редактора групп и промо (инбаунды, slug'и тарифов, id групп)
     window.__availableInbounds = d.available_inbounds || [];
     window.__adminTariffSlugs = Object.keys(d.tariffs || {});
+    window.__adminGroupIds = Object.keys(d.tariff_groups || {});
     let html = '';
 
     // Tariffs editor
@@ -1095,6 +1107,93 @@ function downloadLogs(){
       setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 500);
     })
     .catch(e=>toast('Ошибка: '+e.message, 'error'));
+}
+
+// ====== ПРОМОКОДЫ ======
+async function loadPromo(){
+  const el = document.getElementById('promo-content');
+  try{
+    const d = await api('/admin/promo');
+    el.innerHTML = `
+      <div class="chart-card"><div class="chart-title">Создать промокод</div>
+        <div class="form-row">
+          <div class="field"><label>Код</label><input id="p-code" placeholder="SUMMER20"></div>
+          <div class="field"><label>Тип</label>
+            <select id="p-kind"><option value="percent">Процент</option><option value="fixed">Фиксированная скидка (₽)</option></select>
+          </div>
+          <div class="field"><label>Размер</label><input id="p-value" type="number" value="10" min="1" step="any"></div>
+          <div class="field"><label>Лимит использований</label><input id="p-maxuses" type="number" value="0" min="0" title="0 = безлимит"></div>
+          <div class="field"><label>Срок (пусто = бессрочно)</label><input id="p-expires" placeholder="2026-12-31 23:59:59"></div>
+          <div class="field"><label>Группа тарифов (пусто = все)</label>
+            <select id="p-group"><option value="">Все тарифы</option>${(window.__adminGroupIds||[]).map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join('')}</select>
+          </div>
+        </div>
+        <button class="btn btn-dark" style="margin-top:12px;" onclick="createPromo()">Создать</button>
+      </div>
+      <div class="chart-card"><div class="chart-title">Промокоды</div>
+        <div style="overflow-x:auto;"><table class="tbl">
+          <thead><tr><th>Код</th><th>Скидка</th><th>Использовано</th><th>Срок</th><th>Группа</th><th>Статус</th><th></th></tr></thead>
+          <tbody id="promo-tbody"></tbody>
+        </table></div>
+      </div>`;
+    renderPromoTable(d.items);
+  }catch(e){ el.innerHTML = `<p style="color:var(--err);text-align:center;padding:48px;">Ошибка: ${esc(e.message)}</p>`; }
+}
+
+function renderPromoTable(items){
+  const tb = document.getElementById('promo-tbody');
+  if(!tb) return;
+  tb.innerHTML = (items||[]).map(p => {
+    const disc = p.kind==='fixed' ? `${p.value} ₽` : `${p.value}%`;
+    const used = p.max_uses ? `${p.used_count}/${p.max_uses}` : `${p.used_count}/∞`;
+    const status = p.is_active ? '<span style="color:#22a06b;font-weight:600;">Активен</span>' : '<span style="color:var(--text-3);">Выключен</span>';
+    return `<tr>
+      <td style="font-weight:600;">${esc(p.code)}</td>
+      <td>${disc}</td>
+      <td>${used}</td>
+      <td style="font-size:12px;">${esc(p.expires_at||'—')}</td>
+      <td style="font-size:12px;">${esc(p.tariff_group||'все')}</td>
+      <td>${status}</td>
+      <td style="text-align:right;white-space:nowrap;">
+        <button class="btn btn-outline btn-sm" onclick="togglePromo(${p.id})">${p.is_active?'Выкл':'Вкл'}</button>
+        <button class="btn btn-danger btn-sm" onclick="deletePromo(${p.id})">Удалить</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="tbl-empty">Промокодов пока нет</td></tr>';
+}
+
+async function createPromo(){
+  const code = document.getElementById('p-code').value.trim();
+  if(!code){ toast('Введите код', 'error'); return; }
+  const body = {
+    code: code,
+    kind: document.getElementById('p-kind').value,
+    value: parseFloat(document.getElementById('p-value').value)||0,
+    max_uses: parseInt(document.getElementById('p-maxuses').value)||0,
+    expires_at: document.getElementById('p-expires').value.trim(),
+    tariff_group: document.getElementById('p-group').value
+  };
+  try{
+    await api('/admin/promo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    toast('Промокод создан');
+    loadPromo();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function togglePromo(id){
+  try{
+    await api('/admin/promo/'+id+'/toggle', {method:'POST'});
+    loadPromo();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function deletePromo(id){
+  if(!confirm('Удалить промокод?')) return;
+  try{
+    await api('/admin/promo/'+id+'/delete', {method:'POST'});
+    toast('Промокод удалён');
+    loadPromo();
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
 // Модалка для разрушительного действия: всегда с явным полем confirm_email

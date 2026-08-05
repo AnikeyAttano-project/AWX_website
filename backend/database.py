@@ -112,6 +112,19 @@ CREATE TABLE IF NOT EXISTS site_log (
     actor           TEXT,
     details         TEXT
 );
+
+CREATE TABLE IF NOT EXISTS promo_codes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    code            TEXT NOT NULL UNIQUE,
+    kind            TEXT NOT NULL DEFAULT 'percent',   -- 'percent' | 'fixed'
+    value           REAL NOT NULL DEFAULT 0,            -- 10 (процентов) или 100 (рублей)
+    max_uses        INTEGER NOT NULL DEFAULT 0,         -- 0 = безлимит
+    used_count      INTEGER NOT NULL DEFAULT 0,
+    expires_at      TEXT,                                -- NULL = бессрочно
+    tariff_group    TEXT,                                -- ограничение на группу тарифов (NULL = все)
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -177,6 +190,15 @@ async def init_db():
         # Миграция: capability_token для защиты статуса заказа
         try:
             await db.execute("ALTER TABLE orders ADD COLUMN capability_token TEXT")
+        except Exception:
+            pass
+        # Миграция: промо-коды — код и размер скидки на заказе
+        try:
+            await db.execute("ALTER TABLE orders ADD COLUMN promo_code TEXT")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE orders ADD COLUMN promo_discount REAL")
         except Exception:
             pass
         # Миграция: users — verified, trial
@@ -277,11 +299,13 @@ async def init_db():
         await db.commit()
 
 
-async def create_order(order_id: str, tariff: str, amount: float, capability_token: str = ""):
+async def create_order(order_id: str, tariff: str, amount: float, capability_token: str = "",
+                       promo_code: str = None, promo_discount: float = 0.0):
     async with _db() as db:
         await db.execute(
-            "INSERT INTO orders (id, tariff, amount, capability_token) VALUES (?, ?, ?, ?)",
-            (order_id, tariff, amount, capability_token),
+            "INSERT INTO orders (id, tariff, amount, capability_token, promo_code, promo_discount) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (order_id, tariff, amount, capability_token, promo_code, promo_discount),
         )
         await db.commit()
 
@@ -619,6 +643,123 @@ async def prune_site_log(keep: int = 5000) -> int:
         )
         await db.commit()
         return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
+# ————————————————— ПРОМО-КОДЫ (promo_codes) —————————————————
+
+async def create_promo_code(code: str, kind: str, value: float, max_uses: int = 0,
+                            expires_at: str = None, tariff_group: str = None) -> dict:
+    """Создаёт промо-код. Код хранится в верхнем регистре."""
+    code = code.strip().upper()
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            cur = await db.execute(
+                "INSERT INTO promo_codes (code, kind, value, max_uses, expires_at, tariff_group) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (code, kind, value, int(max_uses), expires_at, tariff_group),
+            )
+            await db.commit()
+            promo_id = cur.lastrowid
+        except Exception:
+            raise ValueError(f"Код '{code}' уже существует")
+        cur = await db.execute("SELECT * FROM promo_codes WHERE id = ?", (promo_id,))
+        row = await cur.fetchone()
+        return dict(row)
+
+
+async def get_promo_code(code: str) -> dict | None:
+    """Возвращает промо-код по его коду (без учёта регистра) или None."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM promo_codes WHERE upper(code) = upper(?)", (code.strip(),)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_promo_code_by_id(promo_id: int) -> dict | None:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM promo_codes WHERE id = ?", (promo_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def list_promo_codes() -> list[dict]:
+    """Все промо-коды (свежие сверху)."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM promo_codes ORDER BY id DESC")
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def delete_promo_code(promo_id: int) -> bool:
+    async with _db() as db:
+        cur = await db.execute("DELETE FROM promo_codes WHERE id = ?", (promo_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def toggle_promo_code(promo_id: int) -> dict | None:
+    """Переключает is_active промо-кода; возвращает обновлённый или None."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "UPDATE promo_codes SET is_active = 1 - is_active WHERE id = ?", (promo_id,)
+        )
+        await db.commit()
+        cur = await db.execute("SELECT * FROM promo_codes WHERE id = ?", (promo_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def validate_promo_code(code: str, tariff_slug: str = None,
+                              tariff_group: str = None) -> tuple[dict | None, str | None]:
+    """Проверяет применимость промо-кода.
+
+    Returns: (promo, None) если применим, иначе (None, причина_отказа).
+    """
+    promo = await get_promo_code(code)
+    if not promo:
+        return None, "Промокод не найден"
+    if not promo.get("is_active"):
+        return None, "Промокод неактивен"
+    if promo.get("max_uses") and promo.get("used_count", 0) >= promo["max_uses"]:
+        return None, "Промокод исчерпал лимит использований"
+    if promo.get("expires_at"):
+        try:
+            from datetime import datetime as _dt
+            exp = _dt.strptime(promo["expires_at"], "%Y-%m-%d %H:%M:%S")
+            if exp < _dt.utcnow():
+                return None, "Промокод истёк"
+        except ValueError:
+            pass
+    if promo.get("tariff_group"):
+        if tariff_group and promo["tariff_group"] != tariff_group:
+            return None, "Промокод не действует на этот тариф"
+    return promo, None
+
+
+def compute_promo_discount(promo: dict, total: float) -> tuple[float, float]:
+    """Возвращает (discount, final). percent — доля, fixed — вычет."""
+    if promo.get("kind") == "fixed":
+        discount = min(promo.get("value", 0), total)
+    else:
+        discount = total * (promo.get("value", 0) / 100.0)
+    discount = round(discount, 2)
+    return discount, round(max(0, total - discount), 2)
+
+
+async def use_promo_code(promo_id: int) -> None:
+    """Инкрементирует счётчик использований промо-кода."""
+    async with _db() as db:
+        await db.execute(
+            "UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ?", (promo_id,)
+        )
+        await db.commit()
 
 
 async def claim_trial(user_id: str, expires_at: str) -> bool:

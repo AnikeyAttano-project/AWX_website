@@ -38,6 +38,7 @@ from database import (
     set_user_blocked, count_users, list_users_page, get_user_by_id,
     get_user_subscriptions, mark_order_deleted, set_devices_admin_addon,
     add_site_log, get_site_logs,
+    create_promo_code, list_promo_codes, delete_promo_code, toggle_promo_code,
 )
 from xui_client import _parse_inbound_ids
 
@@ -93,6 +94,15 @@ class TariffGroupItem(BaseModel):
 
 class TariffGroupsRequest(BaseModel):
     groups: dict[str, TariffGroupItem]
+
+
+class PromoCodeCreateRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=32)
+    kind: str = Field(default="percent")  # 'percent' | 'fixed'
+    value: float = Field(gt=0)
+    max_uses: int = Field(ge=0, default=0)   # 0 = безлимит
+    expires_at: str = ""                      # "YYYY-MM-DD HH:MM:SS" или пусто
+    tariff_group: str = ""                    # id группы тарифов или пусто (все)
 
 
 class TrialSettingsRequest(BaseModel):
@@ -641,6 +651,63 @@ async def update_tariff_groups(req: TariffGroupsRequest):
     await save_settings_value("tariff_groups", groups_dict)
     logger.info("Admin updated tariff groups: %s", list(groups_dict.keys()))
     return {"ok": True, "tariff_groups": groups_dict}
+
+
+# -- Промо-коды --
+
+def _validate_promo_expiry(expires_at: str) -> str | None:
+    """Принимает пустую строку или 'YYYY-MM-DD HH:MM:SS'; иначе HTTPException 400."""
+    if not expires_at.strip():
+        return None
+    try:
+        datetime.strptime(expires_at.strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        raise HTTPException(400, "expires_at должен быть в формате 'YYYY-MM-DD HH:MM:SS'")
+    return expires_at.strip()
+
+
+@admin_router.get("/promo")
+async def admin_list_promo():
+    return {"items": await list_promo_codes()}
+
+
+@admin_router.post("/promo")
+async def admin_create_promo(req: PromoCodeCreateRequest):
+    if req.kind not in ("percent", "fixed"):
+        raise HTTPException(400, "kind должен быть 'percent' или 'fixed'")
+    if req.kind == "percent" and (req.value <= 0 or req.value > 100):
+        raise HTTPException(400, "Процент скидки — от 0 до 100")
+    if req.tariff_group and req.tariff_group not in settings.tariff_groups:
+        raise HTTPException(400, f"Группа тарифов '{req.tariff_group}' не существует")
+    try:
+        promo = await create_promo_code(
+            code=req.code, kind=req.kind, value=req.value,
+            max_uses=req.max_uses,
+            expires_at=_validate_promo_expiry(req.expires_at),
+            tariff_group=req.tariff_group or None,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await add_site_log("promo_create", actor="admin", details=promo["code"])
+    return {"ok": True, "item": promo}
+
+
+@admin_router.post("/promo/{promo_id}/toggle")
+async def admin_toggle_promo(promo_id: int):
+    item = await toggle_promo_code(promo_id)
+    if not item:
+        raise HTTPException(404, "Промокод не найден")
+    await add_site_log("promo_toggle", actor="admin",
+                       details=f"{item['code']} active={item['is_active']}")
+    return {"ok": True, "item": item}
+
+
+@admin_router.post("/promo/{promo_id}/delete")
+async def admin_delete_promo(promo_id: int):
+    if not await delete_promo_code(promo_id):
+        raise HTTPException(404, "Промокод не найден")
+    await add_site_log("promo_delete", actor="admin", details=str(promo_id))
+    return {"ok": True}
 
 
 @admin_router.post("/settings/trial")

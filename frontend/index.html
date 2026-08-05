@@ -526,15 +526,26 @@ async function buyTariff(slug, name, price, days) {
       <div style="font-size:12.5px;color:var(--text-3);margin-bottom:10px;">Можно докупить при покупке подписки</div>
       ${optionCards}
     </div>` : ''}
+    <div style="margin-bottom:16px;">
+      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">Промокод</div>
+      <div style="display:flex;gap:8px;">
+        <input id="checkout-promo" placeholder="Например: SUMMER20" style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;">
+        <button class="btn btn-outline" onclick="applyPromo()" style="white-space:nowrap;">Применить</button>
+      </div>
+      <div id="checkout-promo-status" style="font-size:12.5px;margin-top:6px;"></div>
+    </div>
     <div class="checkout-total-row">
       <span style="color:var(--text-2);">Итого</span>
-      <b id="checkout-total">${price} ₽</b>
+      <div style="text-align:right;">
+        <div id="checkout-promo-line" style="font-size:12.5px;color:#22a06b;display:none;"></div>
+        <b id="checkout-total">${price} ₽</b>
+      </div>
     </div>
     <button id="checkout-pay" onclick="payCheckout('${slug}')" class="btn btn-dark" style="width:100%;padding:13px;margin-top:16px;font-size:15px;">Оплатить ${price} ₽</button>
     <button onclick="closeModal()" class="btn btn-outline" style="width:100%;padding:12px;margin-top:8px;">Отмена</button>
   `;
   document.getElementById('payment-modal').classList.add('active');
-  window._checkout = {slug: slug, base: price, addon: ''};
+  window._checkout = {slug: slug, base: price, addon: '', promo: '', promoInfo: null, promoDiscount: 0};
 }
 
 function addonElId(type) {
@@ -549,10 +560,86 @@ function selectCheckoutAddon(type) {
     if (el) el.classList.toggle('checked', o.type === type);
   });
   window._checkout.addon = type;
-  const selected = (tariff.addons || []).find(a => a.type === type);
-  const total = window._checkout.base + (selected ? selected.price : 0);
-  document.getElementById('checkout-total').textContent = total + ' ₽';
-  document.getElementById('checkout-pay').textContent = 'Оплатить ' + total + ' ₽';
+  if (window._checkout.promo) {
+    // Промо применён — пересчитаем скидку у сервера с учётом нового add-on'а
+    applyPromo(true).catch(() => {});
+  } else {
+    renderCheckoutTotal();
+  }
+}
+
+// Пересчёт итоговой суммы в модалке. Скидка считается по серверному ответу
+// промо-кода (kind/value), чтобы не расходиться с /api/order/create.
+function renderCheckoutTotal() {
+  const ck = window._checkout || {};
+  const tariff = TARIFFS_CACHE.find(t => t.slug === ck.slug) || {addons: []};
+  const selected = (tariff.addons || []).find(a => a.type === ck.addon);
+  let total = (ck.base || 0) + (selected ? selected.price : 0);
+  let discount = 0;
+  if (ck.promoInfo) {
+    if (ck.promoInfo.kind === 'fixed') {
+      discount = Math.min(ck.promoInfo.value, total);
+    } else {
+      discount = Math.round(total * ck.promoInfo.value / 100 * 100) / 100;
+    }
+    discount = Math.round(discount * 100) / 100;
+  }
+  const final = Math.max(0, total - discount);
+  const totalEl = document.getElementById('checkout-total');
+  const payEl = document.getElementById('checkout-pay');
+  if (totalEl) totalEl.textContent = final + ' ₽';
+  if (payEl) payEl.textContent = 'Оплатить ' + final + ' ₽';
+  const line = document.getElementById('checkout-promo-line');
+  if (line) {
+    if (discount > 0) {
+      line.textContent = 'Скидка по промокоду ' + ck.promo + ': −' + discount + ' ₽';
+      line.style.display = 'block';
+    } else {
+      line.style.display = 'none';
+    }
+  }
+}
+
+async function applyPromo(silent) {
+  const input = document.getElementById('checkout-promo');
+  const status = document.getElementById('checkout-promo-status');
+  const code = (input ? input.value : '').trim();
+  if (!code) {
+    if (!silent) {
+      window._checkout.promo = '';
+      window._checkout.promoInfo = null;
+      renderCheckoutTotal();
+      if (status) { status.style.color = 'var(--text-3)'; status.textContent = 'Введите код промокода'; }
+    }
+    return;
+  }
+  try {
+    const resp = await fetch(`${API_BASE}/api/promo/check`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        code: code,
+        tariff: window._checkout.slug,
+        addon_type: window._checkout.addon || ''
+      })
+    });
+    const data = await resp.json();
+    if (data.valid) {
+      window._checkout.promo = data.code;
+      window._checkout.promoInfo = {kind: data.kind, value: data.value};
+      if (status) { status.style.color = '#22a06b'; status.textContent = 'Промокод применён: −' + data.discount + ' ₽'; }
+      renderCheckoutTotal();
+    } else {
+      if (!silent) {
+        window._checkout.promo = '';
+        window._checkout.promoInfo = null;
+        renderCheckoutTotal();
+      }
+      if (status) { status.style.color = '#dc2626'; status.textContent = data.error || 'Промокод недействителен'; }
+    }
+  } catch (e) {
+    if (status) { status.style.color = '#dc2626'; status.textContent = 'Ошибка проверки промокода'; }
+  }
 }
 
 async function payCheckout(slug) {
@@ -569,14 +656,15 @@ async function payCheckout(slug) {
       headers: headers,
       body: JSON.stringify({
         tariff: slug,
-        addon_type: (window._checkout && window._checkout.addon) || ''
+        addon_type: (window._checkout && window._checkout.addon) || '',
+        promo_code: (window._checkout && window._checkout.promo) || ''
       })
     });
     const data = await resp.json();
     if (data.payment_url) {
       window.location.href = data.payment_url;
     } else {
-      throw new Error('No payment URL');
+      throw new Error(data.error || 'No payment URL');
     }
   } catch (e) {
     document.getElementById('modal-content').innerHTML = `

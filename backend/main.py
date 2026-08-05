@@ -37,6 +37,8 @@ from database import (
     cancel_pending_addon, finalize_addon_cancellation,
     get_addon_by_tx, get_addon_by_id, get_total_extra_devices,
     add_site_log, prune_site_log,
+    validate_promo_code, compute_promo_discount, use_promo_code,
+    get_promo_code,
 )
 from platega_client import create_payment, check_status, PlategaError
 from pricing import compute_addon_proration
@@ -911,6 +913,7 @@ async def _grant_referral_days(
 class CreateOrderRequest(BaseModel):
     tariff: str  # "quantum_month" | "quantum_quarter" | "quantum_halfyear" | "quantum_year"
     addon_type: str = ""  # "devices_5" | "devices_10" — доп. устройства к покупке (опционально)
+    promo_code: str = ""  # Промо-код (опционально, регистр не важен)
 
 
 class DemoOrderRequest(BaseModel):
@@ -918,7 +921,38 @@ class DemoOrderRequest(BaseModel):
     password: str  # Пароль для демо-оплаты
 
 
+class PromoCheckRequest(BaseModel):
+    code: str
+    tariff: str
+    addon_type: str = ""
+
+
 # ————————————————— ЭНДПОИНТЫ API —————————————————
+
+def _tariff_group_of(tariff_slug: str) -> str | None:
+    """id группы, которой принадлежит тариф (None — без группы)."""
+    for gid, g in settings.tariff_groups.items():
+        if tariff_slug in (g.get("tariffs") or []):
+            return gid
+    return None
+
+
+def _compute_order_total(tariff_slug: str, addon_type: str) -> tuple[float, float]:
+    """(total, addon_price) для тарифа (+ опциональный add-on). Скидка тарифа
+    применяется и к доп. устройствам — полный период (proration)."""
+    tariff = settings.tariffs[tariff_slug]
+    total = tariff["price"]
+    addon_price = 0.0
+    if addon_type:
+        cfg = settings.device_addons.get(addon_type)
+        if cfg:
+            addon_price = compute_addon_proration(
+                cfg["base_price"], tariff.get("discount", 0),
+                tariff["days"], tariff["days"],
+            )["price_now"]
+            total += addon_price
+    return total, addon_price
+
 
 def _tariff_payload(slug: str, t: dict) -> dict:
     """Полный объект тарифа для витрины: цены, add-on'ы, эффективные инбаунды, группа."""
@@ -992,6 +1026,30 @@ async def list_tariffs():
     return {"tariffs": flat, "groups": groups_out, "ungrouped": ungrouped}
 
 
+@app.post("/api/promo/check")
+async def check_promo(req: PromoCheckRequest):
+    """Проверяет промо-код для тарифа (+add-on) и возвращает размер скидки.
+
+    Используется фронтом в модалке подтверждения до создания заказа, чтобы
+    показать итоговую сумму. Финальная валидация — в /api/order/create.
+    """
+    if req.tariff not in settings.tariffs:
+        raise HTTPException(400, "Неизвестный тариф")
+    total, _ = _compute_order_total(req.tariff, req.addon_type)
+    promo, err = await validate_promo_code(req.code, req.tariff, _tariff_group_of(req.tariff))
+    if not promo:
+        return {"valid": False, "error": err}
+    discount, final = compute_promo_discount(promo, total)
+    return {
+        "valid": True,
+        "code": promo["code"],
+        "kind": promo["kind"],
+        "value": promo["value"],
+        "discount": discount,
+        "final": final,
+    }
+
+
 @app.get("/api/config")
 async def api_config():
     """Публичная конфигурация витрины. demo_mode=true → показать кнопку «Демо подписка».
@@ -1030,21 +1088,28 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     if addon_cfg and not user:
         raise HTTPException(401, "Войдите в аккаунт, чтобы добавить устройства")
 
-    # Итоговая сумма: тариф + add-on. Для свежей подписки proration = полный период,
-    # т.е. ceil(base * (1 - discount)) — скидка тарифа применяется и к доп. устройствам.
-    total = tariff["price"]
-    addon_price = 0
-    if addon_cfg:
-        addon_price = compute_addon_proration(
-            addon_cfg["base_price"], tariff.get("discount", 0),
-            tariff["days"], tariff["days"],
-        )["price_now"]
-        total += addon_price
+    # Итоговая сумма: тариф + add-on (скидка тарифа применяется и к доп. устройствам).
+    total, addon_price = _compute_order_total(req.tariff, req.addon_type)
+
+    # Промо-код: валидация + скидка. Код привязан к группе тарифа (если задан).
+    promo = None
+    promo_discount = 0.0
+    if req.promo_code:
+        promo, promo_err = await validate_promo_code(
+            req.promo_code, req.tariff, _tariff_group_of(req.tariff)
+        )
+        if not promo:
+            raise HTTPException(400, promo_err)
+        promo_discount, total = compute_promo_discount(promo, total)
 
     order_id = uuid.uuid4().hex[:12]
     # Capability-токен: случайный токен для доступа к статусу заказа без авторизации
     capability_token = uuid.uuid4().hex
-    await create_order(order_id, req.tariff, total, capability_token)
+    await create_order(
+        order_id, req.tariff, total, capability_token,
+        promo_code=(promo["code"] if promo else None),
+        promo_discount=promo_discount,
+    )
 
     description = f"VPN подписка {tariff['title']} ({tariff['days']} дней)"
     if addon_cfg:
@@ -1091,6 +1156,8 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
         "amount": total,
         "addon_type": req.addon_type,
         "addon_price": addon_price,
+        "promo_code": (promo["code"] if promo else None),
+        "promo_discount": promo_discount,
         "capability_token": capability_token,  # Для доступа к статусу без авторизации
     }
 
@@ -1431,6 +1498,14 @@ async def fulfill_order(order_id: str):
             )
             # State machine: processing → completed (ключ выдан)
             await complete_fulfillment(order_id)
+
+            # Промо-код использован — инкрементируем счётчик (только при успешной выдаче)
+            if order.get("promo_code"):
+                promo_used = await get_promo_code(order["promo_code"])
+                if promo_used:
+                    await use_promo_code(promo_used["id"])
+                    logger.info("Order %s: promo %s applied (+1 use)", order_id, order["promo_code"])
+
             logger.info(
                 "Order %s fulfilled successfully: email=%s sub_url=%s",
                 order_id, email, sub_url[:80],
