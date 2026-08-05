@@ -917,6 +917,22 @@ async def activate_addon(addon_id: str):
         await db.commit()
 
 
+async def activate_pending_addons_for_order(order_id: str) -> int:
+    """Активировать все pending add-ons заказа (куплены вместе с подпиской).
+
+    Вызывается из fulfill_order после успешной выдачи ключа — платёж уже
+    подтверждён, значит доп. устройства оплачены. Возвращает кол-во активированных.
+    """
+    async with _db() as db:
+        cur = await db.execute(
+            "UPDATE device_addons SET status = 'active' "
+            "WHERE order_id = ? AND status = 'pending'",
+            (order_id,),
+        )
+        await db.commit()
+        return cur.rowcount
+
+
 async def cancel_pending_addon(addon_id: str):
     """Mark add-on as cancel_pending — will be removed at next renewal."""
     async with _db() as db:

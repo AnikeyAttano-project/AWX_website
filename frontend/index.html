@@ -383,18 +383,14 @@
 <script>
 const API_BASE = 'http://localhost:8000';
 
-const MODAL_SPINNER = `
-  <div style="text-align:center;padding:32px 0;">
-    <div style="width:40px;height:40px;border:3px solid #E7E5E0;border-top-color:#1F5F52;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>
-    <p style="color:#6B6862;font-size:14px;">Создание заказа...</p>
-  </div>
-  <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
-`;
+// Кэш тарифов с ценами add-on'ов (из GET /api/tariffs) — для модалки подтверждения
+let TARIFFS_CACHE = [];
 
 async function loadTariffs() {
   try {
     const resp = await fetch(`${API_BASE}/api/tariffs`);
     const tariffs = await resp.json();
+    TARIFFS_CACHE = tariffs;
     const monthPrice = tariffs.find(t => t.slug === 'quantum_month')?.price;
 
     const planName = (slug, title) => {
@@ -448,20 +444,79 @@ async function buyTariff(slug, name, price, days) {
     return;
   }
 
+  // Экран подтверждения: карточка тарифа + селектор доп. устройств + итоговая сумма.
+  const tariff = TARIFFS_CACHE.find(t => t.slug === slug) || {devices: 5, discount: 0, addons: []};
+  const addons = tariff.addons || [];
+  const baseDevices = tariff.devices || 5;
+
+  // Первая опция — «Без доп. устройств» (выбрана по умолчанию). Минимум = базовый лимит тарифа.
+  const optionCards = [
+    {type: '', title: 'Без доп. устройств', price: 0},
+    ...addons
+  ].map(opt => `
+    <div class="checkout-addon ${opt.type === '' ? 'checked' : ''}" id="${addonElId(opt.type)}" onclick="selectCheckoutAddon('${opt.type}')">
+      <span>${opt.title}</span>
+      <span class="checkout-addon-price">${opt.price ? '+' + opt.price + ' ₽' : ''}</span>
+    </div>
+  `).join('');
+
   document.getElementById('modal-content').innerHTML = `
+    <style>
+      .checkout-addon{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1.5px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer;font-size:14px;color:var(--text);transition:border-color .15s,background .15s;}
+      .checkout-addon:hover{border-color:var(--text-3);}
+      .checkout-addon.checked{border-color:var(--accent);background:var(--accent-bg);}
+      .checkout-addon-price{font-weight:600;color:var(--accent);}
+      .checkout-total-row{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);margin-top:4px;padding-top:14px;font-size:15px;}
+      .checkout-total-row b{font-size:20px;color:var(--text);}
+    </style>
     <div style="background:var(--accent-bg);border-radius:12px;padding:20px;margin-bottom:16px;">
       <div style="font-weight:700;font-size:16px;margin-bottom:4px;">${name}</div>
       <div style="font-size:28px;font-weight:700;color:var(--accent);">${price} ₽</div>
       <div style="font-size:13px;color:var(--text-3);">на ${days} дней</div>
     </div>
-    <ul style="list-style:none;padding:0;margin:0 0 20px;font-size:13px;color:var(--text-2);">
+    <ul style="list-style:none;padding:0;margin:0 0 18px;font-size:13px;color:var(--text-2);">
       <li style="padding:4px 0;">✓ Безлимитный трафик</li>
-      <li style="padding:4px 0;">✓ 5 устройств</li>
+      <li style="padding:4px 0;">✓ ${baseDevices} устройств в подписке</li>
       <li style="padding:4px 0;">✓ Все серверы и протоколы</li>
     </ul>
-    ${MODAL_SPINNER}
+    ${addons.length ? `
+    <div style="margin-bottom:16px;">
+      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">Дополнительные устройства</div>
+      <div style="font-size:12.5px;color:var(--text-3);margin-bottom:10px;">Можно докупить при покупке подписки</div>
+      ${optionCards}
+    </div>` : ''}
+    <div class="checkout-total-row">
+      <span style="color:var(--text-2);">Итого</span>
+      <b id="checkout-total">${price} ₽</b>
+    </div>
+    <button id="checkout-pay" onclick="payCheckout('${slug}')" class="btn btn-dark" style="width:100%;padding:13px;margin-top:16px;font-size:15px;">Оплатить ${price} ₽</button>
+    <button onclick="closeModal()" class="btn btn-outline" style="width:100%;padding:12px;margin-top:8px;">Отмена</button>
   `;
   document.getElementById('payment-modal').classList.add('active');
+  window._checkout = {slug: slug, base: price, addon: ''};
+}
+
+function addonElId(type) {
+  return 'checkout-addon-' + (type || 'none');
+}
+
+function selectCheckoutAddon(type) {
+  const tariff = TARIFFS_CACHE.find(t => t.slug === window._checkout.slug) || {addons: []};
+  // Все опции селектора: «без доп. устройств» + пакеты addon'ов
+  [{type: ''}, ...(tariff.addons || [])].forEach(o => {
+    const el = document.getElementById(addonElId(o.type));
+    if (el) el.classList.toggle('checked', o.type === type);
+  });
+  window._checkout.addon = type;
+  const selected = (tariff.addons || []).find(a => a.type === type);
+  const total = window._checkout.base + (selected ? selected.price : 0);
+  document.getElementById('checkout-total').textContent = total + ' ₽';
+  document.getElementById('checkout-pay').textContent = 'Оплатить ' + total + ' ₽';
+}
+
+async function payCheckout(slug) {
+  const btn = document.getElementById('checkout-pay');
+  if (btn) { btn.disabled = true; btn.textContent = 'Создание заказа...'; }
 
   try {
     const token = localStorage.getItem('awx_token');
@@ -471,7 +526,10 @@ async function buyTariff(slug, name, price, days) {
     const resp = await fetch(`${API_BASE}/api/order/create`, {
       method: 'POST',
       headers: headers,
-      body: JSON.stringify({tariff: slug})
+      body: JSON.stringify({
+        tariff: slug,
+        addon_type: (window._checkout && window._checkout.addon) || ''
+      })
     });
     const data = await resp.json();
     if (data.payment_url) {

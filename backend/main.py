@@ -33,7 +33,8 @@ from database import (
     add_referral_reward, get_setting, get_user_by_id,
     cleanup_expired_orders, cleanup_expired_trials, delete_order,
     create_device_addon, get_device_addons_for_order, get_active_addon_for_order,
-    activate_addon, cancel_pending_addon, finalize_addon_cancellation,
+    activate_addon, activate_pending_addons_for_order,
+    cancel_pending_addon, finalize_addon_cancellation,
     get_addon_by_tx, get_addon_by_id, get_total_extra_devices,
 )
 from platega_client import create_payment, check_status, PlategaError
@@ -898,6 +899,7 @@ async def _grant_referral_days(
 
 class CreateOrderRequest(BaseModel):
     tariff: str  # "quantum_month" | "quantum_quarter" | "quantum_halfyear" | "quantum_year"
+    addon_type: str = ""  # "devices_5" | "devices_10" — доп. устройства к покупке (опционально)
 
 
 class DemoOrderRequest(BaseModel):
@@ -909,11 +911,36 @@ class DemoOrderRequest(BaseModel):
 
 @app.get("/api/tariffs")
 async def list_tariffs():
-    """Список доступных тарифов — для витрины."""
-    return [
-        {"slug": slug, "days": t["days"], "price": t["price"], "title": t["title"]}
-        for slug, t in settings.tariffs.items()
-    ]
+    """Список доступных тарифов — для витрины.
+
+    Каждый тариф дополнен кол-вом устройств, скидкой и ценами add-on'ов
+    (доп. устройства к покупке). Цены add-on'ов считаются сервером через
+    compute_addon_proration для полного периода — фронт их не дублирует,
+    чтобы сумма в модалке и в платёжке не могла разойтись.
+    """
+    result = []
+    for slug, t in settings.tariffs.items():
+        days = t["days"]
+        addons = []
+        for atype, cfg in settings.device_addons.items():
+            addons.append({
+                "type": atype,
+                "extra_devices": cfg["extra_devices"],
+                "title": cfg["title"],
+                "price": compute_addon_proration(
+                    cfg["base_price"], t.get("discount", 0), days, days
+                )["price_now"],
+            })
+        result.append({
+            "slug": slug,
+            "days": days,
+            "price": t["price"],
+            "title": t["title"],
+            "devices": t.get("devices", 1),
+            "discount": t.get("discount", 0),
+            "addons": addons,
+        })
+    return result
 
 
 @app.get("/api/config")
@@ -927,8 +954,8 @@ async def api_config():
 @app.post("/api/order/create")
 async def api_create_order(req: CreateOrderRequest, request: Request, user: dict = Depends(get_optional_user)):
     """
-    Шаг 1: пользователь выбирает тариф.
-    Создаёт заказ в БД и платёжную ссылку в Platega.
+    Шаг 1: пользователь выбирает тариф (+ опционально доп. устройства).
+    Создаёт заказ в БД и платёжную ссылку в Platega на ИТОГОВУЮ сумму.
     Если пользователь авторизован — привязывает заказ к аккаунту.
     """
     # Rate limiting: 10 заказов в час с одного IP
@@ -941,16 +968,40 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     if not tariff:
         raise HTTPException(400, "Неизвестный тариф")
 
+    # Доп. устройства к покупке (add-on). Цену считает СЕРВЕР — клиент её не присылает.
+    addon_cfg = settings.device_addons.get(req.addon_type) if req.addon_type else None
+    if req.addon_type and not addon_cfg:
+        raise HTTPException(400, "Неизвестный add-on")
+
+    # device_addons.user_id NOT NULL → доп. устройства доступны только авторизованным
+    if addon_cfg and not user:
+        raise HTTPException(401, "Войдите в аккаунт, чтобы добавить устройства")
+
+    # Итоговая сумма: тариф + add-on. Для свежей подписки proration = полный период,
+    # т.е. ceil(base * (1 - discount)) — скидка тарифа применяется и к доп. устройствам.
+    total = tariff["price"]
+    addon_price = 0
+    if addon_cfg:
+        addon_price = compute_addon_proration(
+            addon_cfg["base_price"], tariff.get("discount", 0),
+            tariff["days"], tariff["days"],
+        )["price_now"]
+        total += addon_price
+
     order_id = uuid.uuid4().hex[:12]
     # Capability-токен: случайный токен для доступа к статусу заказа без авторизации
     capability_token = uuid.uuid4().hex
-    await create_order(order_id, req.tariff, tariff["price"], capability_token)
+    await create_order(order_id, req.tariff, total, capability_token)
+
+    description = f"VPN подписка {tariff['title']} ({tariff['days']} дней)"
+    if addon_cfg:
+        description += f" + {addon_cfg['title']}"
 
     try:
         payment = await create_payment(
-            amount=tariff["price"],
+            amount=total,
             order_id=order_id,
-            description=f"VPN подписка {tariff['title']} ({tariff['days']} дней)",
+            description=description,
             capability_token=capability_token,
         )
     except PlategaError as e:
@@ -959,6 +1010,20 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
 
     await save_platega_tx(order_id, payment["transaction_id"])
 
+    # Создаём add-on-строку (pending), привязанную к заказу и его транзакции.
+    # Активируется в fulfill_order после подтверждения платежа.
+    addon_id = ""
+    if addon_cfg and user:
+        addon_id = uuid.uuid4().hex[:12]
+        expires_at = (datetime.utcnow() + timedelta(days=tariff["days"])).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        await create_device_addon(
+            addon_id, user["id"], order_id, req.addon_type,
+            addon_cfg["extra_devices"], addon_price,
+            expires_at, payment["transaction_id"],
+        )
+
     # Привязываем заказ к пользователю, если авторизован
     if user:
         await set_order_user(order_id, user["id"])
@@ -966,7 +1031,9 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     return {
         "order_id": order_id,
         "payment_url": payment["payment_url"],
-        "amount": tariff["price"],
+        "amount": total,
+        "addon_type": req.addon_type,
+        "addon_price": addon_price,
         "capability_token": capability_token,  # Для доступа к статусу без авторизации
     }
 
@@ -1256,6 +1323,20 @@ async def fulfill_order(order_id: str):
         days = tariff["days"] if tariff else 30
         devices = tariff.get("devices", 1) if tariff else 1
 
+        # Доп. устройства, купленные вместе с подпиской (add-on, pending/active).
+        # Пока платёж не подтверждён addon'ы 'pending' — они уже оплачены тем же
+        # транзакционным платежом, что и заказ, поэтому учитываем их сразу.
+        extra_devices = sum(
+            a["extra_devices"] for a in await get_device_addons_for_order(order_id)
+            if a["status"] in ("pending", "active")
+        )
+        if extra_devices:
+            devices += extra_devices
+            logger.info(
+                "Order %s includes add-on: +%s devices → limit_ip=%s",
+                order_id, extra_devices, devices,
+            )
+
         # Уникальный email на основе тарифа и номера заказа
         email = f"{order['tariff']}-{order_id}@vpn.local"
 
@@ -1292,6 +1373,13 @@ async def fulfill_order(order_id: str):
                 "Order %s fulfilled successfully: email=%s sub_url=%s",
                 order_id, email, sub_url[:80],
             )
+
+            # Активируем add-ons, купленные вместе с заказом (pending → active),
+            # чтобы ЛК/продление/отмена видели итоговый лимит устройств.
+            # Если create_client упал — addon'ы остаются pending, ретрай пересчитает лимит.
+            activated = await activate_pending_addons_for_order(order_id)
+            if activated:
+                logger.info("Order %s: %s add-on(s) activated", order_id, activated)
 
             # Начисляем бонусные дни реферерам
             try:
