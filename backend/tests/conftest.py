@@ -41,6 +41,7 @@ from fastapi.testclient import TestClient
 import main
 import shared_state
 import payment_lifecycle
+import auth as auth_module
 from database import _db, init_db
 
 
@@ -165,6 +166,10 @@ def _clean_db():
     """Чистим все таблицы между тестами (config/БД — одна на процесс)."""
     yield
     run(_truncate_all())
+    # In-memory глобалы тоже сбрасываем, иначе rate-limit/auth-локаут копятся
+    # на общий IP "testclient" и мешают последующим тестам (429).
+    shared_state.rate_limit_storage.clear()
+    auth_module._failed_logins.clear()
 
 
 async def _truncate_all():

@@ -65,9 +65,6 @@ class Settings(BaseSettings):
     jwt_secret: str = ""  # Обязателен! Без него сервер не стартует (fail-fast).
     jwt_expire_hours: int = 720  # 30 дней
 
-    # Email verification (false = auto-verified at registration)
-    email_verification_required: bool = False
-
     # Telegram Login Widget (авторизация через Telegram).
     # token — для криптографической проверки подписи виджета (@BotFather).
     # username — публичное имя бота, фронт по нему рендерит кнопку «Войти через Telegram».

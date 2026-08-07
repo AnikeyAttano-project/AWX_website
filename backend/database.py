@@ -255,6 +255,12 @@ async def init_db():
             await db.execute("ALTER TABLE users ADD COLUMN is_test_account INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass
+        # Миграция: users — token_version для отзыва JWT (№31). Увеличение
+        # инвалидирует все выпущенные ранее токены (logout/revoke).
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
         # Миграция: fulfill state machine — durable статус выдачи ключа.
         # Держим отдельно от status (оплата): payment 'paid' + fulfillment 'processing'.
         # После добавления колонки бэкфиллим существующие заказы.
@@ -397,6 +403,18 @@ async def mark_order_error(order_id: str, error_msg: str):
         await db.commit()
 
 
+async def mark_order_cancelled(order_id: str, error_msg: str = ""):
+    """Пользователь отменил платёж (или он истёк) — терминальный статус
+    'cancelled', ОТДЕЛЬНЫЙ от 'error' (технический сбой выдачи/провайдера)."""
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        await db.execute(
+            "UPDATE orders SET status = 'cancelled', error_msg = ? WHERE id = ?",
+            (error_msg, order_id),
+        )
+        await db.commit()
+
+
 # ————————————————— Fulfill state machine —————————————————
 # fulfillment_status — вторая ось состояния заказа, отдельная от status (оплата):
 #   status='paid'            + fulfillment_status='pending'    — деньги пришли, ключ не выдавали
@@ -512,6 +530,17 @@ async def get_user_by_id(user_id: str) -> dict | None:
         return dict(row) if row else None
 
 
+async def increment_token_version(user_id: str):
+    """Инвалидирует все выданные JWT пользователя (№31): старые токены с
+    прежним 'ver' перестают проходить проверку в get_current_user."""
+    async with _db() as db:
+        await db.execute(
+            "UPDATE users SET token_version = token_version + 1 WHERE id = ?",
+            (user_id,),
+        )
+        await db.commit()
+
+
 async def create_user(
     user_id: str,
     email: str,
@@ -533,12 +562,6 @@ async def create_user(
             "INSERT INTO users (id, email, password_hash, verified, referral_code) VALUES (?, ?, ?, ?, ?)",
             (user_id, email, password_hash, verified, code),
         )
-        await db.commit()
-
-
-async def set_user_verified(user_id: str):
-    async with _db() as db:
-        await db.execute("UPDATE users SET verified = 1 WHERE id = ?", (user_id,))
         await db.commit()
 
 

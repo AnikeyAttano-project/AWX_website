@@ -982,7 +982,17 @@ async function initNavUser() {
 }
 
 function handleNavLogout() {
+  const token = localStorage.getItem('awx_token');
   localStorage.removeItem('awx_token');
+  if (token) {
+    // Лучший-effort инвалидация токена на сервере (№31). Даже при ошибке сети
+    // выходим локально — следующий вход выдаст свежий token_version.
+    fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      keepalive: true,
+    }).catch(() => {});
+  }
   window.location.reload();
 }
 

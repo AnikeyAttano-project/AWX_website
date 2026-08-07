@@ -1,9 +1,8 @@
 """
 JWT authentication for AWX-WEB-lite.
-Provides register, login, verification, and token validation.
+Provides register, login, logout (token revoke), and token validation.
 """
 import uuid
-import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -14,15 +13,14 @@ from jose import JWTError, jwt
 
 from config import settings
 from database import (
-    get_user_by_email, create_user, get_user_by_id, set_user_verified,
+    get_user_by_email, create_user, get_user_by_id,
+    increment_token_version,
     get_user_by_referral_code, apply_referral_code, get_setting,
     get_user_by_telegram, create_telegram_user, set_user_telegram,
     add_site_log,
 )
 from shared_state import get_real_ip, check_rate_limit
 from tg_auth import verify_telegram_auth, TelegramAuthError
-
-logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -75,17 +73,14 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def create_token(user_id: str) -> str:
-    """Create a JWT token for the given user_id."""
+def create_token(user_id: str, token_version: int = 0) -> str:
+    """Create a JWT token for the given user_id.
+
+    token_version — счётчик "сессий" юзера: logout инкрементит его в БД,
+    поэтому все ранее выданные токены (с меньшей ver) мгновенно умирают.
+    """
     expire = datetime.utcnow() + timedelta(hours=settings.jwt_expire_hours)
-    payload = {"sub": user_id, "exp": expire}
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
-
-
-def create_verification_token(user_id: str) -> str:
-    """JWT used ONLY for email verification. 24h expiry."""
-    expire = datetime.utcnow() + timedelta(hours=24)
-    payload = {"sub": user_id, "type": "email_verify", "exp": expire}
+    payload = {"sub": user_id, "ver": token_version, "exp": expire}
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
@@ -106,6 +101,9 @@ async def get_current_user(authorization: str = Header(default="")) -> dict:
         raise HTTPException(status_code=401, detail="User not found")
     if user.get("blocked"):
         raise HTTPException(status_code=403, detail="Account blocked")
+    if payload.get("ver") != user.get("token_version", 0):
+        # Токен выдан до logout или до сброса сессий — недействителен.
+        raise HTTPException(status_code=401, detail="Session expired, please log in again")
     return user
 
 
@@ -124,13 +122,13 @@ async def get_optional_user(authorization: str = Header(default="")) -> dict | N
     user = await get_user_by_id(user_id)
     if user and user.get("blocked"):
         return None
+    if user and payload.get("ver") != user.get("token_version", 0):
+        return None
     return user
 
 
 async def require_verified_email(user: dict = Depends(get_current_user)):
-    """403 if email verification is required but not done."""
-    if settings.email_verification_required and not user.get("verified"):
-        raise HTTPException(status_code=403, detail="Email not verified")
+    """Deprecated: email verification отключена, заглушка-пасс-через."""
     return user
 
 
@@ -155,8 +153,8 @@ async def register(req: RegisterRequest, request: Request):
 
     user_id = uuid.uuid4().hex[:12]
     password_hash = pwd_context.hash(req.password)
-    verified = 0 if settings.email_verification_required else 1
-    await create_user(user_id, req.email.lower().strip(), password_hash, verified=verified)
+    # Email-верификация отключена (№32) — пользователь активен сразу.
+    await create_user(user_id, req.email.lower().strip(), password_hash, verified=1)
     await add_site_log("register", actor=user_id, details=req.email.lower().strip())
 
     # Привязываем реферальный код, если указан при регистрации (не критично при ошибке)
@@ -166,39 +164,12 @@ async def register(req: RegisterRequest, request: Request):
         if referrer and referrer["id"] != user_id:
             await apply_referral_code(user_id, referrer["id"])
 
-    result = {
-        "token": create_token(user_id),
+    return {
+        "token": create_token(user_id, 0),
         "user_id": user_id,
         "email": req.email.lower().strip(),
-        "verified": bool(verified),
+        "verified": True,
     }
-
-    if settings.email_verification_required:
-        vtoken = create_verification_token(user_id)
-        verify_url = f"{settings.site_base_url}/api/auth/verify?token={vtoken}"
-        # НЕ возвращаем URL в ответе (безопасность) — только в лог
-        logger.info("Verify link for %s: %s", user_id, verify_url)
-        result["message"] = "Check your email for verification link"
-
-    return result
-
-
-@auth_router.get("/verify")
-async def verify_email(token: str):
-    """Verify email via token link (GET so it works in browser)."""
-    try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-    except JWTError:
-        raise HTTPException(400, "Invalid or expired verification link")
-    if payload.get("type") != "email_verify":
-        raise HTTPException(400, "Invalid verification token")
-    user = await get_user_by_id(payload["sub"])
-    if not user:
-        raise HTTPException(400, "User not found")
-    if user.get("verified"):
-        return {"ok": True, "message": "Email already verified"}
-    await set_user_verified(payload["sub"])
-    return {"ok": True, "message": "Email verified"}
 
 
 @auth_router.post("/login")
@@ -223,7 +194,7 @@ async def login(req: LoginRequest, request: Request):
     if user.get("blocked"):
         raise HTTPException(403, "Account blocked")
     _reset_failed_logins(email)
-    token = create_token(user["id"])
+    token = create_token(user["id"], user.get("token_version", 0))
     await add_site_log("login", actor=user["id"], details=user["email"])
     return {
         "token": token,
@@ -231,6 +202,18 @@ async def login(req: LoginRequest, request: Request):
         "email": user["email"],
         "verified": bool(user.get("verified")),
     }
+
+
+@auth_router.post("/logout")
+async def logout(user: dict = Depends(get_current_user)):
+    """Игнорит все ранее выданные токены: инкрементит token_version.
+
+    Токен, переданный в этом запросе, умирает вместе со всеми остальными —
+    что и есть цель logout.
+    """
+    await increment_token_version(user["id"])
+    await add_site_log("logout", actor=user["id"], details=user["email"])
+    return {"ok": True}
 
 
 @auth_router.get("/me")
@@ -292,7 +275,7 @@ async def telegram_login(payload: dict = Body(...)):
     if user.get("blocked"):
         raise HTTPException(403, "Account blocked")
 
-    token = create_token(user["id"])
+    token = create_token(user["id"], user.get("token_version", 0))
     await add_site_log("telegram_login", actor=user["id"], details=user["email"])
     return {
         "token": token,

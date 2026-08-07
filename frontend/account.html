@@ -812,9 +812,18 @@ async function handleRegister(e) {
 }
 
 function handleLogout() {
+  const token = getToken();
   clearToken();
   showAuthSection();
   document.getElementById('login-password').value = '';
+  if (token) {
+    // Инвалидируем токен на сервере (№31) — best-effort, см. handleNavLogout.
+    fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      keepalive: true,
+    }).catch(() => {});
+  }
 }
 
 // ————————————————— КАБИНЕТ —————————————————
