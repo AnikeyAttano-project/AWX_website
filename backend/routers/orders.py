@@ -230,8 +230,8 @@ async def api_demo_order(req: DemoOrderRequest, request: Request, user: dict = D
     if not settings.demo_mode:
         raise HTTPException(404, "Демо-режим отключён")
 
-    # Проверка пароля демо-оплаты
-    if req.password != settings.demo_password:
+    # Проверка пароля демо-оплаты (constant-time)
+    if not hmac.compare_digest(req.password, settings.demo_password):
         raise HTTPException(403, "Неверный пароль демо-оплаты")
 
     # Rate-limit: 3 demo-заказа в час с одного IP (защита от абьюза)
@@ -274,7 +274,8 @@ async def api_demo_order(req: DemoOrderRequest, request: Request, user: dict = D
 
 
 @router.get("/api/order/{order_id}/status")
-async def api_order_status(order_id: str, request: Request, token: str = ""):
+async def api_order_status(order_id: str, request: Request, token: str = "",
+                           user: dict = Depends(get_optional_user)):
     """
     Витрина опрашивает этот эндпоинт после редиректа с оплаты.
     Возвращает sub-ссылку, если ключ уже создан.
@@ -292,13 +293,13 @@ async def api_order_status(order_id: str, request: Request, token: str = ""):
     if not order:
         raise HTTPException(404, "Заказ не найден")
 
-    # Проверка авторизации: capability-токен ИЛИ владелец заказа
-    # Авторизация: capability-токен ИЛИ владелец ИЛИ заказ без токена (backward compat)
+    # Проверка авторизации: capability-токен ИЛИ авторизованный владелец заказа.
+    # НЕ вырождаем в «заказ без токена отдаётся любому» (backward compat убран —
+    # иначе любой, кто знает order_id, получал бы sub_url VPN-ключа).
     is_authorized = False
     if token and order.get("capability_token") and hmac.compare_digest(token, order["capability_token"]):
         is_authorized = True
-    elif not order.get("capability_token"):
-        # Старый заказ без capability_token — разрешаем доступ (backward compatibility)
+    elif user and order.get("user_id") and hmac.compare_digest(str(user.get("id")), str(order["user_id"])):
         is_authorized = True
 
     logger.info("Status check for order %s: status=%s, has_sub_url=%s, has_tx=%s",
@@ -306,7 +307,9 @@ async def api_order_status(order_id: str, request: Request, token: str = ""):
 
     # Case 1: paid but no key created → retry fulfill_order.
     # Оплата уже подтверждена — lifecycle.fulfill без повторного check_status.
-    if order["status"] == "paid" and not order.get("sub_url"):
+    # Retry выполняем ТОЛЬКО для авторизованных: это side-effecting операция
+    # (создаёт ключ в 3x-UI), её не должен провоцировать неавторизованный клиент.
+    if is_authorized and order["status"] == "paid" and not order.get("sub_url"):
         logger.info("Order %s is paid but has no sub_url, retrying fulfill_order", order_id)
         try:
             await shared_state.order_lifecycle.fulfill(order_id)

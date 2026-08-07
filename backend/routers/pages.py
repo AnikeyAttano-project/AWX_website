@@ -15,8 +15,8 @@ async def payment_success(order_id: str, token: str = ""):
 
 @router.get("/payment/failed", response_class=HTMLResponse)
 async def payment_failed(order_id: str):
-    """Страница после неудачной оплаты."""
-    return "<html><body><h2>Оплата не удалась</h2><p>Попробуйте снова.</p></body></html>"
+    """Страница после неудачной оплаты (в стиле витрины, №42 из правки.txt)."""
+    return FAILED_PAGE
 
 
 HTML_TEMPLATE_STR = """
@@ -25,72 +25,82 @@ HTML_TEMPLATE_STR = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Спасибо за покупку!</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Спасибо за покупку</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      :root{
+        --bg:#F3F2EE;--surface:#FFFFFF;--border:#E7E5E0;--text:#191815;--text-2:#5A564F;--text-3:#6E6A61;
+        --accent:#1F5F52;--accent-bg:#EAF1EE;--ok-soft:#EAF1EE;--warn-soft:#FCF5DE;--warn-text:#6B4A00;
+      }
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{background:var(--bg);color:var(--text);font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+      .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:0 12px 32px rgba(35,32,25,.08);padding:32px;max-width:520px;width:100%;text-align:center;}
+      .icon-ok{display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;background:var(--ok-soft);color:var(--accent);margin-bottom:16px;}
+      h1{font-size:22px;font-weight:700;margin-bottom:8px;}
+      .sub{font-size:14px;color:var(--text-2);margin-bottom:6px;}
+      .order-id{font-size:13px;color:var(--text-3);margin-bottom:24px;}
+      .btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:44px;padding:11px 18px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;border:1px solid transparent;cursor:pointer;transition:all .15s;margin-bottom:12px;}
+      .btn-primary{background:var(--accent);color:#fff;}
+      .btn-primary:hover{background:#17493F;}
+      .btn-secondary{background:var(--surface);color:var(--text);border-color:var(--border);}
+      .btn-secondary:hover{border-color:var(--text-3);}
+      .notice{background:var(--warn-soft);border-left:3px solid #D9A406;padding:10px 14px;border-radius:0 8px 8px 0;font-size:12.5px;color:var(--warn-text);text-align:left;margin-bottom:14px;line-height:1.5;}
+      .link-box{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:14px 0;word-break:break-all;font-size:13px;color:var(--accent);}
+      .qr-wrap{display:flex;justify-content:center;margin:16px 0;}
+      .qr-wrap img{width:180px;height:180px;border:1px solid var(--border);border-radius:12px;background:#fff;}
+      .status-line{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--text-2);font-size:14px;margin:16px 0;}
+      .spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      .hidden{display:none!important;}
+      :focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+      @media (prefers-reduced-motion: reduce){*{animation-duration:.01ms !important;animation-iteration-count:1 !important;}}
+    </style>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
-    <div class="bg-white rounded-lg shadow-lg p-8 max-w-2xl w-full">
-        <h1 class="text-3xl font-bold text-green-600 mb-4">✅ Спасибо за покупку!</h1>
-        <p class="text-gray-700 mb-2">Оплата получена. Ваш ключ готовится...</p>
-        <p class="text-gray-500 text-sm mb-6">Заказ: <strong>{{ order_id }}</strong></p>
+<body>
+    <div class="card">
+        <div class="icon-ok">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h1>Спасибо за покупку!</h1>
+        <p class="sub">Оплата получена. Ваш ключ готовится...</p>
+        <p class="order-id">Заказ: <strong>{{ order_id }}</strong></p>
 
-        <!-- Кнопка в ЛК — доступна СРАЗУ, не ждём загрузки ключа -->
-        <a href="/account.html" class="block w-full text-center bg-green-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-green-700 transition mb-6 text-lg">
-            🔑 Перейти в личный кабинет
-        </a>
+        <a href="/account.html" class="btn btn-primary">Перейти в личный кабинет</a>
 
-        <div id="status" class="mb-6">
-            <div class="flex items-center gap-3 text-gray-500 text-sm">
-                <svg class="animate-spin h-5 w-5 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+        <div id="status">
+            <div class="status-line">
+                <div class="spinner" aria-hidden="true"></div>
                 <span id="status-text">Проверяем статус ключа...</span>
             </div>
         </div>
 
         <div id="result" class="hidden">
-            <div class="bg-green-50 border-l-4 border-green-500 p-4 mb-4">
-                <p class="text-sm text-green-700 font-semibold">🎉 Ключ уже готов! Вот ваша подписка:</p>
+            <div class="notice" style="background:var(--ok-soft);border-color:var(--accent);color:var(--accent);font-weight:600;">Ключ уже готов — вот ваша подписка:</div>
+
+            <div class="link-box"><strong>Ваша подписка:</strong><br><code id="sub_url" style="word-break:break-all;"></code></div>
+
+            <div class="qr-wrap">
+                <img id="qr_code" src="" alt="QR-код подписки">
             </div>
 
-            <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
-                <p class="text-sm text-blue-700">
-                    <strong>Ваша подписка:</strong><br>
-                    <code id="sub_url" class="bg-white px-2 py-1 rounded text-xs break-all"></code>
-                </p>
+            <div class="notice">
+                <strong>Важно:</strong> Если вы видите только одну ссылку — при импорте в приложение
+                (v2rayNG, Hiddify, V2Ray Tun) появятся все серверы.
+            </div>
+            <div class="notice" style="background:var(--ok-soft);border-color:var(--accent);color:var(--accent);">
+                <strong>Инструкция:</strong> Скопируйте ссылку и вставьте в приложение для VPN.
             </div>
 
-            <div class="flex justify-center mb-4">
-                <img id="qr_code" src="" alt="QR Code" class="border-4 border-gray-200 rounded">
-            </div>
-
-            <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-4">
-                <p class="text-sm text-yellow-700">
-                    <strong>⚠️ Важно:</strong> Если вы видите только одну ссылку — при импорте в приложение
-                    (v2rayNG, Hiddify, V2Ray Tun) появятся все 8 серверов.
-                </p>
-            </div>
-
-            <div class="bg-green-50 border-l-4 border-green-500 p-4 mb-4">
-                <p class="text-sm text-green-700">
-                    <strong>📱 Инструкция:</strong> Скопируйте ссылку и вставьте в приложение для VPN.
-                </p>
-            </div>
-
-            <a href="/account.html" class="block w-full text-center bg-gray-600 text-white font-medium py-2 px-4 rounded hover:bg-gray-700 transition">
-                Перейти в личный кабинет
-            </a>
+            <a href="/account.html" class="btn btn-secondary">Перейти в личный кабинет</a>
         </div>
 
-        <!-- Если ключ НЕ загрузился — показываем ссылку на ЛК -->
         <div id="timeout-hint" class="hidden">
-            <div class="bg-amber-50 border-l-4 border-amber-400 p-4 mb-4">
-                <p class="text-sm text-amber-700">
-                    <strong>Ключ ещё готовится.</strong> Не переживайте — он уже в процессе.
-                    Вы можете забрать его в личном кабинете.
-                </p>
+            <div class="notice">
+                <strong>Ключ ещё готовится.</strong> Не переживайте — он уже в процессе.
+                Вы можете забрать его в личном кабинете.
             </div>
-            <a href="/account.html" class="block w-full text-center bg-green-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-green-700 transition">
-                🔑 Забрать ключ в личном кабинете
-            </a>
+            <a href="/account.html" class="btn btn-primary">Забрать ключ в личном кабинете</a>
         </div>
     </div>
 
@@ -143,6 +153,46 @@ HTML_TEMPLATE_STR = """
 
         checkStatus();
     </script>
+</body>
+</html>
+"""
+
+
+FAILED_PAGE = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Оплата не прошла</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      :root{--bg:#F3F2EE;--surface:#FFFFFF;--border:#E7E5E0;--text:#191815;--text-2:#5A564F;--text-3:#6E6A61;--accent:#1F5F52;--err:#C0392B;}
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{background:var(--bg);color:var(--text);font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+      .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:0 12px 32px rgba(35,32,25,.08);padding:32px;max-width:420px;width:100%;text-align:center;}
+      .icon-err{display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;background:#FBEAEA;color:var(--err);margin-bottom:16px;}
+      h1{font-size:20px;font-weight:700;margin-bottom:8px;}
+      .sub{font-size:14px;color:var(--text-2);margin-bottom:24px;line-height:1.5;}
+      .btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:44px;padding:11px 18px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;border:1px solid transparent;cursor:pointer;transition:all .15s;margin-bottom:12px;}
+      .btn-primary{background:var(--accent);color:#fff;}
+      .btn-primary:hover{background:#17493F;}
+      .btn-secondary{background:var(--surface);color:var(--text);border-color:var(--border);}
+      .btn-secondary:hover{border-color:var(--text-3);}
+      :focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon-err">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 8v5M12 16.5v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </div>
+        <h1>Оплата не прошла</h1>
+        <p class="sub">Платёж не был завершён. Проверьте данные карты или попробуйте снова. Ваши деньги не списаны.</p>
+        <a href="/" class="btn btn-primary">Вернуться к тарифам</a>
+        <a href="/account.html" class="btn btn-secondary">Перейти в личный кабинет</a>
+    </div>
 </body>
 </html>
 """

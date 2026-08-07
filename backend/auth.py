@@ -4,9 +4,10 @@ Provides register, login, verification, and token validation.
 """
 import uuid
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Header
+from fastapi import APIRouter, Body, Depends, HTTPException, Header, Request
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -18,12 +19,49 @@ from database import (
     get_user_by_telegram, create_telegram_user, set_user_telegram,
     add_site_log,
 )
+from shared_state import get_real_ip, check_rate_limit
 from tg_auth import verify_telegram_auth, TelegramAuthError
 
 logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# Защита /auth/login от перебора: email -> timestamps неудачных попыток.
+# (in-memory, как и rate_limit_storage; теряется при рестарте — приемлемо.)
+_failed_logins = defaultdict(list)
+
+
+def _prune_failed_logins():
+    """Удаляет ключи, у которых все попытки истекли (ограничение памяти)."""
+    now = datetime.now()
+    cutoff = now - timedelta(minutes=settings.auth_lockout_minutes)
+    expired = [
+        email for email, stamps in _failed_logins.items()
+        if not [t for t in stamps if t > cutoff]
+    ]
+    for email in expired:
+        del _failed_logins[email]
+
+
+def _is_account_locked(email: str) -> bool:
+    now = datetime.now()
+    cutoff = now - timedelta(minutes=settings.auth_lockout_minutes)
+    recent = [t for t in _failed_logins[email] if t > cutoff]
+    _failed_logins[email] = recent
+    return len(recent) >= settings.auth_lockout_after
+
+
+def _record_failed_login(email: str):
+    _failed_logins[email].append(datetime.now())
+    if len(_failed_logins[email]) > 50:  # cap рост на один email
+        _failed_logins[email] = _failed_logins[email][-50:]
+    if len(_failed_logins) > 2000:  # глобальная чистка
+        _prune_failed_logins()
+
+
+def _reset_failed_logins(email: str):
+    _failed_logins.pop(email, None)
 
 
 class RegisterRequest(BaseModel):
@@ -97,10 +135,17 @@ async def require_verified_email(user: dict = Depends(get_current_user)):
 
 
 @auth_router.post("/register")
-async def register(req: RegisterRequest):
+async def register(req: RegisterRequest, request: Request):
     """Register a new user. Returns JWT token."""
-    if len(req.password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
+    ip = get_real_ip(request)
+    if not check_rate_limit(ip, settings.auth_rate_limit_per_hour, 60):
+        raise HTTPException(429, "Too many registration attempts, try later")
+    if len(req.password) < settings.password_min_length:
+        raise HTTPException(
+            400, f"Password must be at least {settings.password_min_length} characters")
+    if len(req.password) > settings.password_max_length:
+        raise HTTPException(
+            400, f"Password must be at most {settings.password_max_length} characters")
     if len(req.email) < 3 or "@" not in req.email:
         raise HTTPException(400, "Invalid email address")
 
@@ -157,15 +202,27 @@ async def verify_email(token: str):
 
 
 @auth_router.post("/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     """Login with email and password. Returns JWT token."""
-    user = await get_user_by_email(req.email.lower().strip())
+    ip = get_real_ip(request)
+    if not check_rate_limit(ip, settings.auth_rate_limit_per_hour, 60):
+        raise HTTPException(429, "Too many login attempts, try later")
+
+    email = req.email.lower().strip()
+    if _is_account_locked(email):
+        raise HTTPException(
+            429, "Too many failed attempts. Try again in a few minutes.")
+
+    user = await get_user_by_email(email)
     if not user:
+        _record_failed_login(email)
         raise HTTPException(401, "Invalid email or password")
     if not pwd_context.verify(req.password, user["password_hash"]):
+        _record_failed_login(email)
         raise HTTPException(401, "Invalid email or password")
     if user.get("blocked"):
         raise HTTPException(403, "Account blocked")
+    _reset_failed_logins(email)
     token = create_token(user["id"])
     await add_site_log("login", actor=user["id"], details=user["email"])
     return {

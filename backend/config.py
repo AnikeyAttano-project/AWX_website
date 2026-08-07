@@ -19,9 +19,10 @@ class Settings(BaseSettings):
     # Формат: https://your-panel-host:2096/sub/
     xui_sub_base_url: str = ""
 
-    # SSL: отключить проверку сертификата для self-signed (3x-UI)
-    # В продакшене с валидным сертификатом установите true
-    xui_verify_ssl: bool = False
+    # SSL: проверка сертификата 3x-UI ВКЛЮЧЕНА по умолчанию (безопасно).
+    # Для self-signed панели установите XUI_VERIFY_SSL=false явно в .env
+    # (или примонтируйте CA панели) — при этом сервер пишет предупреждение.
+    xui_verify_ssl: bool = True
 
     # Retry-конфигурация для операций с 3x-UI (create_client и др.).
     # Задаётся через RETRY_CONFIG в .env как JSON-строка:
@@ -45,6 +46,17 @@ class Settings(BaseSettings):
     site_base_url: str  # https://your-domain.com (БЕЗ слэша)
     database_path: str = "orders.db"
     allowed_origins: str = '["http://localhost:3000","http://localhost:8000"]'
+    # IP адреса доверенных reverse-proxy (nginx), через запятую.
+    # Если пусто — заголовки X-Forwarded-For/X-Real-IP ИГНОРИРУЮТСЯ (безопасно по
+    # умолчанию). Если сервер за nginx — укажите IP прокси, чтобы rate-limit
+    # считался по реальному клиенту: "1.2.3.4,127.0.0.1"
+    trusted_proxies: list[str] = []
+
+    # IP-адреса, с которых приходят вебхуки платёжных провайдеров (через запятую).
+    # Пусто = не проверять источник (менее безопасно). Рекомендуется заполнить
+    # реальными IP ЮKassa/Platega: "130.193.70.192,130.193.77.192".
+    # Для локальной отладки: "127.0.0.1".
+    webhook_ip_allowlist: list[str] = []
 
     # Admin panel
     admin_api_key: str = ""  # X-Admin-Key для /admin/* — задаётся через ADMIN_API_KEY
@@ -74,8 +86,9 @@ class Settings(BaseSettings):
 
     # Демо-режим: кнопка "Демо подписка" на витрине (выдаёт ключ без оплаты).
     # По умолчанию ВЫКЛЮЧЕН для безопасности. Включите DEMO_MODE=true в .env для отладки.
+    # Дефолтного пароля больше НЕТ: при demo_mode=true и пустом/слабом пароле сервер не стартует.
     demo_mode: bool = False
-    demo_password: str = "AxZz123@Tt"  # Пароль для демо-оплаты (только для тестирования)
+    demo_password: str = ""
 
     # Дебаг-песочница биллинга — включает /admin/debug/* эндпоинты.
     # По умолчанию ВЫКЛЮЧЕНА. Никогда не включай на проде с реальными платежами —
@@ -147,6 +160,14 @@ class Settings(BaseSettings):
             return ",".join(str(i) for i in v)
         return v
 
+    @field_validator("trusted_proxies", "webhook_ip_allowlist", mode="before")
+    @classmethod
+    def parse_ip_list(cls, v):
+        # Из .env приходит строка через запятую: "1.2.3.4,127.0.0.1" → список
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v or []
+
     @field_validator("xui_sub_base_url")
     @classmethod
     def validate_sub_base_url(cls, v):
@@ -157,6 +178,16 @@ class Settings(BaseSettings):
         if not v.startswith("http"):
             raise ValueError("xui_sub_base_url must start with http:// or https://")
         return v
+
+    # Политика паролей (auth): мин/макс длина
+    password_min_length: int = 10
+    password_max_length: int = 128
+
+    # Rate-limit на /auth/register и /auth/login: лимит попыток на IP/аккаунт
+    # за час + временная блокировка после N неудач.
+    auth_rate_limit_per_hour: int = 20
+    auth_lockout_after: int = 5
+    auth_lockout_minutes: int = 15
 
     @field_validator("jwt_secret")
     @classmethod
@@ -170,6 +201,32 @@ class Settings(BaseSettings):
             )
         if len(v) < 32:
             raise ValueError("JWT_SECRET слишком короткий — минимум 32 символа")
+        return v
+
+    @field_validator("admin_api_key")
+    @classmethod
+    def validate_admin_api_key(cls, v):
+        v = str(v or "").strip()
+        # Fail-fast: если ключ задан, он должен быть достаточно длинным.
+        # (Пустой ключ = /admin/* закрыт — require_admin отклоняет все запросы.)
+        if v and len(v) < 32:
+            raise ValueError(
+                "ADMIN_API_KEY слишком короткий — минимум 32 символа. "
+                "Сгенерируйте: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+            )
+        return v
+
+    @field_validator("demo_password")
+    @classmethod
+    def validate_demo_password(cls, v, info):
+        v = str(v or "").strip()
+        demo_mode = info.data.get("demo_mode", False)
+        # Fail-fast: демо-режим с пустым или слабым паролем не должен стартовать.
+        if demo_mode and len(v) < 8:
+            raise ValueError(
+                "DEMO_MODE=true, но DEMO_PASSWORD пуст или короче 8 символов. "
+                "Задайте сильный пароль или отключите DEMO_MODE."
+            )
         return v
 
     class Config:

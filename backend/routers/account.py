@@ -15,7 +15,8 @@ from database import (
     sum_reward_days, get_referral_list, get_setting,
     get_order, get_device_addons_for_order, get_active_addon_for_order,
     activate_pending_addons_for_order, cancel_pending_addon,
-    finalize_addon_cancellation, get_addon_by_id, get_total_extra_devices,
+    finalize_addon_cancellation, finalize_pending_addon,
+    get_addon_by_id, get_total_extra_devices,
     claim_trial, set_order_custom_name, mark_order_deleted,
     create_device_addon, create_renewal, get_renewal_by_id,
     set_renewal_status, get_pending_renewal_for_order, get_user_by_id,
@@ -125,6 +126,7 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
             amount=amount, order_id=renewal_id,
             description=f"Продление подписки {order['tariff']} ({days} дн.)",
             capability_token=uuid.uuid4().hex,
+            return_url=f"{settings.site_base_url}/account.html",
         )
     except PaymentError as e:
         raise HTTPException(502, str(e))
@@ -433,6 +435,17 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
     if not order.get("xui_email"):
         raise HTTPException(400, "Нет привязки к 3x-UI")
 
+    # №21: истёкшая подписка НЕ получает аддон бесплатно. Раньше при remaining=0
+    # proration давал цену 0 и аддон активировался без оплаты. Теперь — только
+    # после продления.
+    if order.get("expires_at"):
+        try:
+            exp = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
+            if exp < datetime.utcnow():
+                raise HTTPException(400, "Подписка истекла. Продлите её, чтобы добавить устройства")
+        except ValueError:
+            pass
+
     addon_cfg = settings.device_addons.get(req.addon_type)
     if not addon_cfg:
         raise HTTPException(400, "Неизвестный тип add-on")
@@ -481,7 +494,8 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
     try:
         payment = await provider.create_payment(amount=price_now, order_id=addon_id,
                                                 description=f"Доп. устройства {addon_cfg['title']} ({round(remaining)} дн.)",
-                                                capability_token=uuid.uuid4().hex)
+                                                capability_token=uuid.uuid4().hex,
+                                                return_url=f"{settings.site_base_url}/account.html")
     except PaymentError as e:
         raise HTTPException(502, str(e))
 
@@ -516,7 +530,12 @@ async def cancel_addon(order_id: str, user: dict = Depends(get_optional_user)):
 
 @router.get("/subscription/{order_id}/addons")
 async def list_addons(order_id: str, user: dict = Depends(get_optional_user)):
-    """Список add-on'ов для подписки."""
+    """Список add-on'ов для подписки + каталог пакетов (для цен, №45 из правки.txt).
+
+    Раньше фронтенд показывал захардкоженные «100 ₽/мес»/«170 ₽/мес». Теперь цены
+    и названия пакетов приходят с сервера (settings.device_addons) — изменение
+    тарифов в админке сразу отражается в ЛК.
+    """
     if not user:
         raise HTTPException(401, "Требуется авторизация")
     order = await get_user_order(user["id"], order_id)
@@ -524,7 +543,16 @@ async def list_addons(order_id: str, user: dict = Depends(get_optional_user)):
         raise HTTPException(404, "Подписка не найдена")
     addons = await get_device_addons_for_order(order_id)
     total_extra = await get_total_extra_devices(order_id)
-    return {"addons": addons, "total_extra_devices": total_extra}
+    catalog = [
+        {
+            "type": atype,
+            "extra_devices": cfg["extra_devices"],
+            "title": cfg["title"],
+            "base_price": cfg["base_price"],
+        }
+        for atype, cfg in settings.device_addons.items()
+    ]
+    return {"addons": addons, "total_extra_devices": total_extra, "catalog": catalog}
 
 
 @router.get("/addon/{addon_id}/status")
@@ -543,7 +571,13 @@ async def addon_status(addon_id: str, user: dict = Depends(get_optional_user)):
     # активного провайдера, 3) активирует ТОЛЬКО при "succeeded". Если статус
     # не succeeded — addon остаётся pending, webhook/polling попробует снова.
     if addon.get("platega_tx_id"):
-        await shared_state.addon_lifecycle.confirm_and_fulfill(addon_id, addon["platega_tx_id"])
+        result = await shared_state.addon_lifecycle.confirm_and_fulfill(
+            addon_id, addon["platega_tx_id"]
+        )
+        # Отменённый/протухший платёж — финализируем аддон (pending → cancelled),
+        # иначе дедуп в purchase_addon заблокирует повторную покупку (№16).
+        if result.get("final") in ("cancelled", "expired"):
+            await finalize_pending_addon(addon_id)
         addon = await get_addon_by_id(addon_id)
 
     return {

@@ -7,7 +7,7 @@
 import base64
 import json
 
-ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key"}
+ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key-0123456789abcdefghijklmnopqrstuvwxyz"}
 
 PNG_LOGO = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\nfakepng").decode()
 

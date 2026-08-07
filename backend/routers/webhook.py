@@ -4,9 +4,11 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 import shared_state
+from config import settings
 from database import (
     get_addon_by_tx, get_addon_by_id, get_renewal_by_tx, get_renewal_by_id,
     get_order, get_order_by_tx, set_renewal_status, mark_order_error,
+    finalize_pending_addon,
 )
 from payment_providers import PaymentError
 
@@ -14,13 +16,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["webhook"])
 
+def _is_webhook_source_allowed(request: Request) -> bool:
+    """Проверка IP-источника вебхука.
+
+    Если WEBHOOK_IP_ALLOWLIST не пуст, принимаем вебхук только с перечисленных
+    IP (реальный клиент вычисляется через get_real_ip — учитывает trusted_proxies,
+    если сервер за nginx). Пустой allowlist = проверка выключена (для совместимости
+    с локальным dev, но в проде рекомендуется заполнить).
+    """
+    allowlist = getattr(settings, "webhook_ip_allowlist", None) or []
+    if not allowlist:
+        return True
+    peer = shared_state.get_real_ip(request)
+    return peer in allowlist
+
 async def _handle_payment_webhook(request: Request, provider: "PaymentProvider"):
     """Общая обработка вебхука платёжного провайдера.
 
     Провайдер проверяет подлинность (verify_webhook), парсит тело (parse_webhook),
     а реальный статус всегда перепроверяется через его API (check_status) —
-    поддельный вебхук не пройдёт.
+    поддельный вебхук не пройдёт. Дополнительно вебхуки принимаются только
+    с IP из WEBHOOK_IP_ALLOWLIST (если он задан).
     """
+    if not _is_webhook_source_allowed(request):
+        logger.warning("Webhook rejected: source IP not in allowlist (%s)", provider.name)
+        raise HTTPException(403, "Forbidden")
+
     body = await request.body()
 
     if not provider.verify_webhook(request.headers, body):
@@ -52,7 +73,11 @@ async def _handle_payment_webhook(request: Request, provider: "PaymentProvider")
                 if addon_by_id and addon_by_id.get("platega_tx_id") == tx_id:
                     addon = addon_by_id
             if addon:
-                logger.info("Addon payment cancelled/expired: id=%s", addon["id"])
+                # Финализируем pending-аддон в 'cancelled': иначе он навсегда
+                # останется pending и заблокирует повторную покупку этого типа
+                # устройств (дедуп в purchase_addon видит pending).
+                await finalize_pending_addon(addon["id"])
+                logger.info("Addon payment cancelled/expired, finalized: id=%s", addon["id"])
             else:
                 renewal = await get_renewal_by_tx(tx_id)
                 if not renewal and order_id:
@@ -97,6 +122,11 @@ async def _handle_payment_webhook(request: Request, provider: "PaymentProvider")
 
     # Обычный заказ
     order = await get_order(order_id) if order_id else None
+    if order and order.get("platega_tx_id") != tx_id:
+        # order_id из тела вебхука не привязан к этой транзакции — не доверяем ему,
+        # иначе один оплаченный tx мог бы исполнить произвольный заказ (атака).
+        logger.warning("Webhook order_id=%s does not match tx=%s", order_id, tx_id)
+        order = None
     if not order:
         order = await get_order_by_tx(tx_id)
     if not order:

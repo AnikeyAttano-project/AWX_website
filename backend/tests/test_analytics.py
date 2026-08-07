@@ -11,7 +11,7 @@ from database import (
     add_site_log, _db, create_order, set_order_user,
 )
 
-ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key"}
+ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key-0123456789abcdefghijklmnopqrstuvwxyz"}
 
 
 async def _seed_paid_order(oid, tariff, amount, days_ago):

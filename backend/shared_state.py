@@ -32,7 +32,8 @@ from database import (
     create_device_addon, get_device_addons_for_order, get_active_addon_for_order,
     activate_addon, activate_pending_addons_for_order,
     cancel_pending_addon, finalize_addon_cancellation,
-    get_addon_by_tx, get_addon_by_id, get_total_extra_devices,
+    finalize_pending_addon, expire_stale_pending,
+    get_addon_by_tx, get_addon_by_id,
     add_site_log, prune_site_log,
     validate_promo_code, compute_promo_discount, use_promo_code,
     get_promo_code,
@@ -56,15 +57,39 @@ rate_limit_storage = defaultdict(list)
 
 
 def get_real_ip(request: Request) -> str:
-    """Извлекает реальный IP клиента из proxy-заголовков (X-Forwarded-For / X-Real-IP)."""
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        # X-Forwarded-For: client, proxy1, proxy2 — берём первый (реальный IP)
-        return xff.split(",")[0].strip()
-    xri = request.headers.get("x-real-ip", "")
-    if xri:
-        return xri.strip()
-    return request.client.host if request.client else "0.0.0.0"
+    """Извлекает реальный IP клиента.
+
+    Безопасность: по умолчанию НЕ доверяем заголовкам X-Forwarded-For /
+    X-Real-IP — их может подделать любой клиент (обход rate-limit). Если бэкенд
+    стоит за trusted reverse-proxy (nginx), перечислите IP прокси в
+    TRUSTED_PROXIES (через запятую) — тогда из XFF берётся первый элемент
+    (реальный клиент), т.к. nginx перезаписывает заголовок.
+    """
+    peer = request.client.host if request.client else "0.0.0.0"
+    trusted = getattr(settings, "trusted_proxies", None) or []
+    if peer in trusted:
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            # X-Forwarded-For: client, proxy1, proxy2 — берём первый (реальный IP)
+            return xff.split(",")[0].strip()
+        xri = request.headers.get("x-real-ip", "")
+        if xri:
+            return xri.strip()
+    return peer
+
+
+# После какого числа ключей в rate_limit_storage запускается глобальная чистка
+# (удаление пустых ключей). Ограничивает память: без этого каждый уникальный IP
+# оставлял бы ключ навсегда.
+_RATE_LIMIT_MAX_KEYS = 5000
+_rate_limit_calls = 0
+
+
+def _prune_rate_limit_keys():
+    """Удаляет ключи с пустыми списками (все записи истекли)."""
+    empty = [ip for ip, ts in rate_limit_storage.items() if not ts]
+    for ip in empty:
+        del rate_limit_storage[ip]
 
 
 def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) -> bool:
@@ -72,6 +97,7 @@ def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) 
     Проверяет rate limit для IP адреса.
     Возвращает True если запрос разрешён, False если превышен лимит.
     """
+    global _rate_limit_calls
     now = datetime.now()
     window_start = now - timedelta(minutes=window_minutes)
 
@@ -80,6 +106,11 @@ def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) 
         req_time for req_time in rate_limit_storage[ip]
         if req_time > window_start
     ]
+
+    # Периодическая глобальная чистка пустых ключей (примерно раз в 100 вызовов)
+    _rate_limit_calls += 1
+    if _rate_limit_calls % 100 == 0 and len(rate_limit_storage) > _RATE_LIMIT_MAX_KEYS:
+        _prune_rate_limit_keys()
 
     # Проверяем лимит
     if len(rate_limit_storage[ip]) >= max_requests:
@@ -111,8 +142,14 @@ async def cleanup_expired_subscriptions():
     # 2. Сбрасываем устаревшие триалы
     trials_reset = await cleanup_expired_trials(grace_days=14)
 
-    if deleted_count or trials_reset:
-        logger.info("Cleanup: deleted %d orders, reset %d trials", deleted_count, trials_reset)
+    # 3. Финализируем зависшие pending-заявки (продления/аддоны, платёж которых
+    #    так и не подтверждён). Без этого дедуп блокировал бы повторную покупку/
+    #    продление навсегда (№16, №17 из правки.txt).
+    stale_renewals, stale_addons = await expire_stale_pending(hours=24)
+
+    if deleted_count or trials_reset or stale_renewals or stale_addons:
+        logger.info("Cleanup: deleted %d orders, reset %d trials, expired %d renewals, %d addons",
+                    deleted_count, trials_reset, stale_renewals, stale_addons)
 
 
 async def _renew_subscription_core(order_id: str, order: dict) -> dict:
@@ -319,21 +356,27 @@ def _make_qr_base64(data: str) -> str:
 async def _provision_addon(addon: dict):
     """Провижининг add-on после подтверждения оплаты.
 
-    Перевод pending → active выполняет lifecycle (activate=activate_addon);
-    здесь — только обновление лимита устройств в 3x-UI. Идемпотентность и
-    защита от гонки — на lifecycle (per-entity asyncio.Lock).
+    Порядок (№19 из правки.txt): СНАЧАЛА применяем лимит в 3x-UI, и ТОЛЬКО при
+    успехе активируем (pending → active). При XuiError исключение уходит наружу,
+    add-on остаётся 'pending' — webhook/polling повторят попытку (lifecycle даёт
+    retry только из pending). Раньше активация шла ДО update_client_limit: при
+    сбое add-on был 'active', лимит не применён, и retry был невозможен.
     """
     order = await get_order(addon["order_id"])
-    if order and order.get("xui_email"):
-        tariff = settings.tariffs.get(order["tariff"])
-        base_devices = tariff.get("devices", 5) if tariff else 5
-        extra = await get_total_extra_devices(addon["order_id"])
-        try:
-            await update_client_limit(order["xui_email"], base_devices + extra)
-            logger.info("Addon activated: id=%s type=%s limit=%d",
-                        addon["id"], addon["addon_type"], base_devices + extra)
-        except XuiError as e:
-            logger.error("Addon activate: failed to update limit: %s", e)
+    if not order or not order.get("xui_email"):
+        raise RuntimeError(f"Addon {addon['id']}: order not provisionable")
+    tariff = settings.tariffs.get(order["tariff"])
+    base_devices = tariff.get("devices", 5) if tariff else 5
+    # Лимит включает ЭТОТ add-on (он ещё pending) + остальные активные.
+    extra = addon["extra_devices"] + sum(
+        a["extra_devices"] for a in await get_device_addons_for_order(addon["order_id"])
+        if a["status"] == "active" and a["id"] != addon["id"]
+    )
+    limit = base_devices + extra
+    await update_client_limit(order["xui_email"], limit)  # XuiError → наружу (retry)
+    await activate_addon(addon["id"])
+    logger.info("Addon activated: id=%s type=%s limit=%d",
+                addon["id"], addon["addon_type"], limit)
 
 
 async def fulfill_addon(addon_id: str):
@@ -348,26 +391,36 @@ async def fulfill_addon(addon_id: str):
 async def _provision_renewal(renewal: dict):
     """Выполняет фактическое продление после подтверждения оплаты.
 
-    Платёж уже подтверждён (confirm_and_fulfill) — здесь только renew_client +
-    обновление expires_at + обработка cancel_pending add-ons (внутри
-    _renew_subscription_core). При любой ошибке помечаем заявку 'failed',
-    чтобы пользователь мог создать новое продление (дедуп видит только 'pending').
+    Порядок (№22 из правки.txt): СНАЧАЛА renew_client (реальное продление),
+    ПОТОМ activate (pending → active). При сетевом сбое (XuiError/500) заявка
+    остаётся 'pending' — polling/webhook повторят продление; статус 'failed'
+    ставим ТОЛЬКО для неретраируемых ошибок (клиент удалён в 3x-UI / нет
+    привязки). Раньше активация шла до renew_client: при сбое заявка была
+    'active', хотя продление не выполнено, и дедуп пропускал её — юзер платил
+    второй раз за то же продление.
     """
-    order_id = renewal["order_id"]
+    order = await get_order(renewal["order_id"])
+    if not order or not order.get("xui_email"):
+        await set_renewal_status(renewal["id"], "failed")
+        return
     try:
-        order = await get_order(order_id)
-        if not order or not order.get("xui_email"):
-            raise HTTPException(400, "Подписка недоступна для продления")
-        await _renew_subscription_core(order_id, order)
+        await _renew_subscription_core(renewal["order_id"], order)
     except HTTPException as e:
-        logger.error("Renew provision failed for %s: %s", renewal["id"], e.detail)
-        await set_renewal_status(renewal["id"], "failed")
+        # 404 = клиент удалён в 3x-UI — неретраируемо. 500 = сетевой сбой — ретраится.
+        if e.status_code == 404:
+            logger.error("Renew not retryable for %s: %s", renewal["id"], e.detail)
+            await set_renewal_status(renewal["id"], "failed")
+        else:
+            logger.error("Renew provision failed (retryable) for %s: %s", renewal["id"], e.detail)
+        return
     except XuiError as e:
-        logger.error("Renew provision failed for %s: %s", renewal["id"], e)
-        await set_renewal_status(renewal["id"], "failed")
+        # Сетевой сбой 3x-UI — заявка остаётся pending, polling/webhook повторят.
+        logger.error("Renew provision failed (retryable) for %s: %s", renewal["id"], e)
+        return
     except Exception as e:
         logger.error("Renew provision unexpected error for %s: %s", renewal["id"], e)
-        await set_renewal_status(renewal["id"], "failed")
+        return
+    await activate_renewal(renewal["id"])
 
 
 async def _provision_order(order: dict):
@@ -506,7 +559,10 @@ async def fulfill_order(order_id: str):
 addon_lifecycle = PaymentLifecycle(
     get_by_id=get_addon_by_id,
     get_by_tx=get_addon_by_tx,
-    activate=activate_addon,
+    # activate=None: перевод pending → active выполняет _provision_addon ПОСЛЕ
+    # успешного update_client_limit (№19) — при сбое аддон остаётся pending и
+    # ретраится, а не «активируется впустую».
+    activate=None,
     provision=_provision_addon,
     lock_prefix="addon",
 )
@@ -515,7 +571,9 @@ addon_lifecycle = PaymentLifecycle(
 renewal_lifecycle = PaymentLifecycle(
     get_by_id=get_renewal_by_id,
     get_by_tx=get_renewal_by_tx,
-    activate=activate_renewal,          # pending -> active, идемпотентно
+    # activate=None: pending → active выполняет _provision_renewal ПОСЛЕ успешного
+    # renew_client (№22). При сбое заявка остаётся pending и ретраится.
+    activate=None,
     provision=_provision_renewal,       # реальное продление после подтверждения
     lock_prefix="renewal",
 )

@@ -1,7 +1,7 @@
 """Абстракция платёжных провайдеров.
 
 Интерфейс PaymentProvider:
-  - create_payment(amount, order_id, description, capability_token) -> dict
+  - create_payment(amount, order_id, description, capability_token, return_url) -> dict
       {"transaction_id", "payment_url", "status"}
   - check_status(transaction_id) -> "pending" | "succeeded" | "cancelled"
   - verify_webhook(headers, body) -> bool  (подлинность вебхука)
@@ -12,6 +12,7 @@
 ('platega' | 'yookassa'), редактируется в админке.
 """
 import base64
+import hmac
 import json
 import uuid
 
@@ -32,7 +33,7 @@ class PaymentError(Exception):
 class PaymentProvider:
     name = "abstract"
 
-    async def create_payment(self, amount, order_id, description, capability_token=""):
+    async def create_payment(self, amount, order_id, description, capability_token="", return_url=""):
         raise NotImplementedError
 
     async def check_status(self, transaction_id):
@@ -50,9 +51,11 @@ class PaymentProvider:
 class PlategaProvider(PaymentProvider):
     name = "platega"
 
-    async def create_payment(self, amount, order_id, description, capability_token=""):
+    async def create_payment(self, amount, order_id, description, capability_token="", return_url=""):
         try:
-            return await _platega_create(amount, order_id, description, capability_token)
+            return await _platega_create(
+                amount, order_id, description, capability_token, return_url
+            )
         except PlategaError as e:
             raise PaymentError(str(e)) from e
 
@@ -63,13 +66,13 @@ class PlategaProvider(PaymentProvider):
             raise PaymentError(str(e)) from e
 
     def verify_webhook(self, headers, body):
-        """Проверка через заголовки X-MerchantId + X-Secret."""
+        """Проверка через заголовки X-MerchantId + X-Secret (constant-time)."""
         if not settings.platega_secret:
             return False
         merchant_id = headers.get("x-merchantid", "")
         secret = headers.get("x-secret", "")
-        return (merchant_id == settings.platega_merchant_id
-                and secret == settings.platega_secret)
+        return (hmac.compare_digest(merchant_id, settings.platega_merchant_id)
+                and hmac.compare_digest(secret, settings.platega_secret))
 
     def parse_webhook(self, body):
         try:
@@ -109,17 +112,18 @@ class YooKassaProvider(PaymentProvider):
             "Content-Type": "application/json",
         }
 
-    async def create_payment(self, amount, order_id, description, capability_token=""):
+    async def create_payment(self, amount, order_id, description, capability_token="", return_url=""):
         token_param = f"&token={capability_token}" if capability_token else ""
+        return_to = return_url or (
+            f"{settings.site_base_url}/payment/success"
+            f"?order_id={order_id}{token_param}"
+        )
         payload = {
             "amount": {"value": f"{float(amount):.2f}", "currency": "RUB"},
             "capture": True,
             "confirmation": {
                 "type": "redirect",
-                "return_url": (
-                    f"{settings.site_base_url}/payment/success"
-                    f"?order_id={order_id}{token_param}"
-                ),
+                "return_url": return_to,
             },
             "description": description[:255],
             "metadata": {"order_id": order_id},

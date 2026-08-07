@@ -20,20 +20,30 @@ async def create_payment(
     order_id: str,
     description: str,
     capability_token: str = "",
+    return_url: str = "",
 ) -> dict:
     """
     Создаёт платёжную ссылку.
 
+    return_url (необязательно): куда редиректит после оплаты. По умолчанию —
+    /payment/success?order_id=... (витрина опрашивает статус по capability-токену).
+    Для аддонов/продлений передаётся /account.html — ЛК сам поллит статус
+    (pollPendingAddon/pollPendingRenewal), т.к. /payment/success не умеет
+    опрашивать /api/account/* (там нужен JWT, а не capability-токен).
+
     Returns: {"transaction_id": str, "payment_url": str, "status": str}
     """
     token_param = f"&token={capability_token}" if capability_token else ""
+    return_to = return_url or (
+        f"{settings.site_base_url}/payment/success?order_id={order_id}{token_param}"
+    )
     payload = {
         "paymentDetails": {
             "amount": round(float(amount), 2),
             "currency": "RUB",
         },
         "description": description[:255],
-        "return": f"{settings.site_base_url}/payment/success?order_id={order_id}{token_param}",
+        "return": return_to,
         "failedUrl": f"{settings.site_base_url}/payment/failed?order_id={order_id}",
         # Поле "payload" не существует в Platega API — Platega молча игнорирует.
         # Для связи заказа с транзакцией используем поиск по transaction_id.

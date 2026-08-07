@@ -81,20 +81,26 @@ app.add_middleware(
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    """Добавляет заголовки безопасности (CSP) к HTML-ответам."""
+    """Добавляет заголовки безопасности (CSP, referrer, nosniff) к HTML-ответам."""
     response = await call_next(request)
+    # Referrer-Policy: no-referrer — критично: capability-токен в URL возврата
+    # не должен утекать через Referer на сторонние CDN (fonts).
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if response.headers.get("content-type", "").startswith("text/html"):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data:; "
             "connect-src 'self'; "
             "object-src 'none'; "
             "base-uri 'self'; "
             "frame-ancestors 'none'"
         )
-        response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 

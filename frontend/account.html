@@ -13,7 +13,7 @@
     --border:#E7E5E0;
     --text:#191815;
     --text-2:#5A564F;
-    --text-3:#9A968D;
+    --text-3:#6E6A61;   /* WCAG AA ≥4.5:1 на светлом фоне (было #9A968D ≈2.6:1) */
     --accent:#1F5F52;
     --accent-bg:#EAF1EE;
     --glass-bg:rgba(255,255,255,.45);
@@ -32,6 +32,7 @@
   .blob-3{width:380px;height:380px;background:#3E3E3A;bottom:8%;left:22%;opacity:.3;}
   .wrap{max-width:1040px;margin:0 auto;padding:0 24px;}
   .hidden{display:none!important;}
+  .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}
 
   /* Header */
   header{
@@ -58,6 +59,7 @@
     padding:9px 18px;border-radius:6px;font-size:14px;font-weight:600;
     text-decoration:none;border:1px solid transparent;transition:all .15s;cursor:pointer;
     font-family:'Manrope',sans-serif;
+    min-height:44px; /* touch-цель ≥44px (WCAG 2.5.8) */
   }
   .btn-ghost{color:var(--text-2);background:transparent;}
   .btn-ghost:hover{color:var(--text);}
@@ -162,7 +164,7 @@
   .pill{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;}
   .pill-active{background:var(--accent-bg);color:var(--accent);}
   .pill-expired{background:#F1EFEA;color:var(--text-3);}
-  .pill-pending{background:#F7EFD9;color:#8A6D1F;}
+  .pill-pending{background:#F7EFD9;color:#6B4A00;} /* WCAG AA (было #8A6D1F ≈4.27:1) */
 
   /* Empty / loading / error */
   .empty-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:48px 24px;text-align:center;}
@@ -175,6 +177,19 @@
   .load-block p{color:var(--text-2);font-size:14px;}
   .spinner{width:34px;height:34px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 14px;}
   @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Доступность: видимый фокус (WCAG 2.4.7) */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px;}
+  .modal-close:focus-visible, .key-copy:focus-visible, .icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+  /* Доступность: отключаем тяжёлые эффекты при prefers-reduced-motion (WCAG 2.3.3) */
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important;scroll-behavior:auto !important;}
+    .blob{filter:none;opacity:.25;}
+    header{backdrop-filter:none;-webkit-backdrop-filter:none;}
+    .modal-overlay{backdrop-filter:none;-webkit-backdrop-filter:none;}
+    .btn-glass{backdrop-filter:none;-webkit-backdrop-filter:none;}
+  }
 
   /* Trial card */
   .trial-card{
@@ -334,7 +349,7 @@
               <label for="login-password">Пароль</label>
               <input type="password" id="login-password" required autocomplete="current-password" placeholder="••••••••">
             </div>
-            <div id="login-error" class="form-error hidden"></div>
+            <div id="login-error" class="form-error hidden" role="alert"></div>
             <button type="submit" id="login-btn" class="btn btn-dark btn-block">Войти</button>
 
             <div style="display:flex;align-items:center;gap:12px;color:var(--text-3,#9A968D);font-size:13px;margin:14px 0 12px;">
@@ -365,7 +380,7 @@
               <label for="register-referral">Реферальный код (необязательно)</label>
               <input type="text" id="register-referral" autocomplete="off" placeholder="Например: AB12CD34" style="text-transform:uppercase;">
             </div>
-            <div id="register-error" class="form-error hidden"></div>
+            <div id="register-error" class="form-error hidden" role="alert"></div>
             <button type="submit" id="register-btn" class="btn btn-dark btn-block">Зарегистрироваться</button>
             <p class="form-switch">
               Уже есть аккаунт?
@@ -405,7 +420,7 @@
 
       <div class="dash-section-head">
         <h2>Мои подписки</h2>
-        <button onclick="loadSubscriptions()" title="Обновить" class="icon-btn">
+        <button onclick="loadSubscriptions()" title="Обновить" aria-label="Обновить список подписок" class="icon-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
@@ -416,7 +431,7 @@
 
       <div class="dash-section-head">
         <h2>Реферальная программа</h2>
-        <button onclick="loadReferral()" title="Обновить" class="icon-btn">
+        <button onclick="loadReferral()" title="Обновить" aria-label="Обновить реферальную статистику" class="icon-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
@@ -445,8 +460,8 @@
 
 <!-- Модальное окно с ключом -->
 <div id="key-modal" class="modal-overlay" onclick="if(event.target===this)closeKeyModal()">
-  <div class="modal modal-key">
-    <button class="modal-close" onclick="closeKeyModal()">×</button>
+  <div class="modal modal-key" role="dialog" aria-modal="true" aria-label="Ключ подписки">
+    <button class="modal-close" aria-label="Закрыть" onclick="closeKeyModal()">×</button>
     <div id="key-modal-content">
       <!-- Контент задаётся из JS -->
     </div>
@@ -455,8 +470,8 @@
 
 <!-- Модальное окно статистики -->
 <div id="stats-modal" class="modal-overlay" onclick="if(event.target===this)closeStatsModal()">
-  <div class="modal modal-key">
-    <button class="modal-close" onclick="closeStatsModal()">×</button>
+  <div class="modal modal-key" role="dialog" aria-modal="true" aria-label="Статистика подписки">
+    <button class="modal-close" aria-label="Закрыть" onclick="closeStatsModal()">×</button>
     <div id="stats-modal-content">
       <!-- Контент задаётся из JS -->
     </div>
@@ -465,24 +480,25 @@
 
 <!-- Модальное окно переименования -->
 <div id="rename-modal" class="modal-overlay" onclick="if(event.target===this)closeRenameModal()">
-  <div class="modal">
-    <button class="modal-close" onclick="closeRenameModal()">×</button>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Переименовать подписку">
+    <button class="modal-close" aria-label="Закрыть" onclick="closeRenameModal()">×</button>
     <div class="key-head">
       <h4 class="key-title">Переименовать подписку</h4>
       <p class="key-sub">Укажите удобное для вас название</p>
     </div>
     <div class="field">
-      <input type="text" id="rename-input" maxlength="100" placeholder="Например: Дом, Работа, Телефон">
+      <label for="rename-input" class="visually-hidden">Название подписки</label>
+      <input type="text" id="rename-input" maxlength="100" placeholder="Например: Дом, Работа, Телефон" aria-label="Название подписки">
     </div>
-    <div id="rename-error" class="form-error hidden"></div>
+    <div id="rename-error" class="form-error hidden" role="alert"></div>
     <button id="rename-save-btn" onclick="submitRename()" class="btn btn-dark btn-block">Сохранить</button>
   </div>
 </div>
 
 <!-- Модалка покупки дополнительных устройств -->
 <div id="addon-modal" class="modal-overlay" onclick="if(event.target===this)closeAddonModal()">
-  <div class="modal">
-    <button class="modal-close" onclick="closeAddonModal()">×</button>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Дополнительные устройства">
+    <button class="modal-close" aria-label="Закрыть" onclick="closeAddonModal()">×</button>
     <div class="key-head">
       <h4 class="key-title">Дополнительные устройства</h4>
       <p class="key-sub" id="addon-sub-info">Загрузка...</p>
@@ -517,21 +533,21 @@
       </div>
       <button onclick="cancelAddon()" class="btn btn-outline btn-block" style="color:var(--danger,#dc2626);border-color:var(--danger,#dc2626);">Отказаться от доп. устройств</button>
     </div>
-    <div id="addon-error" class="form-error hidden"></div>
+    <div id="addon-error" class="form-error hidden" role="alert"></div>
     <button id="addon-buy-btn" onclick="buyAddon()" class="btn btn-dark btn-block">Оплатить</button>
   </div>
 </div>
 
 <!-- Модалка привязки Telegram -->
 <div id="tg-bind-modal" class="modal-overlay" onclick="if(event.target===this)closeTelegramBindModal()">
-  <div class="modal">
-    <button class="modal-close" onclick="closeTelegramBindModal()">×</button>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Привязать Telegram">
+    <button class="modal-close" aria-label="Закрыть" onclick="closeTelegramBindModal()">×</button>
     <div class="key-head">
       <h4 class="key-title">Привязать Telegram</h4>
       <p class="key-sub">Войдите через Telegram, чтобы привязать его к аккаунту. Вход по email будет работать как раньше.</p>
     </div>
     <div id="tg-bind-box" style="display:flex;justify-content:center;margin-top:16px;"></div>
-    <div id="tg-bind-error" class="form-error hidden"></div>
+    <div id="tg-bind-error" class="form-error hidden" role="alert"></div>
   </div>
 </div>
 
@@ -651,6 +667,9 @@ function showToast(message, type) {
   if (!toast) {
     toast = document.createElement('div');
     toast.id = 'toast';
+    // aria-live: скрин-ридер озвучивает тост (№6 из правки.txt)
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
     toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 22px;border-radius:10px;color:#fff;font-weight:600;font-size:14px;box-shadow:0 8px 30px rgba(0,0,0,.2);z-index:200;transition:opacity .3s;font-family:"Manrope",sans-serif;max-width:90vw;text-align:center;';
     document.body.appendChild(toast);
   }
@@ -683,6 +702,13 @@ function showAuthError(id, message) {
   const el = document.getElementById(id);
   el.textContent = message;
   el.classList.remove('hidden');
+  // Доступность (№49): переносим фокус на первое поле формы, чтобы скрин-ридер
+  // и клавиатурная навигация сразу видели, где нужно исправить ввод.
+  const form = el.closest('form');
+  if (form) {
+    const input = form.querySelector('input:not([type=hidden]):not([disabled])');
+    if (input) input.focus();
+  }
 }
 
 function hideAuthError(id) {
@@ -735,10 +761,12 @@ async function handleRegister(e) {
 
   if (password.length < 6) {
     showAuthError('register-error', 'Пароль должен быть не короче 6 символов');
+    document.getElementById('register-password').focus();
     return;
   }
   if (password !== password2) {
     showAuthError('register-error', 'Пароли не совпадают');
+    document.getElementById('register-password2').focus();
     return;
   }
 
@@ -1042,18 +1070,70 @@ async function activateTrial() {
   }
 }
 
+// ————————————————— МОДАЛЬНЫЕ ОКНА (общие) —————————————————
+// Доступность (№5 из правки.txt): role/aria уже в разметке; здесь — фокус
+// на первый элемент, Tab-ловушка, блокировка скролла и возврат фокуса.
+
+let _lastModalTrigger = null;
+
+function _modalFocusables(el) {
+  return Array.from(el.querySelectorAll(
+    'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])'
+  )).filter(n => n.offsetParent !== null);
+}
+
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('active');
+  if (!_lastModalTrigger) {
+    _lastModalTrigger = document.activeElement;   // вернём фокус при закрытии
+    document.body.style.overflow = 'hidden';
+  }
+  const focusables = _modalFocusables(el);
+  (focusables[0] || el).focus();
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('active');
+  const anyOpen = document.querySelector('.modal-overlay.active');
+  if (!anyOpen) {
+    document.body.style.overflow = '';
+    if (_lastModalTrigger && typeof _lastModalTrigger.focus === 'function') {
+      _lastModalTrigger.focus();
+    }
+    _lastModalTrigger = null;
+  }
+}
+
+function trapFocusInModal(e) {
+  const active = document.querySelector('.modal-overlay.active');
+  if (!active || e.key !== 'Tab') return;
+  const focusables = _modalFocusables(active);
+  if (!focusables.length) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 // ————————————————— МОДАЛЬНОЕ ОКНО С КЛЮЧОМ —————————————————
 
 let currentSubUrl = '';
 
 function openKeyModal() {
-  document.getElementById('key-modal').classList.add('active');
-  document.body.style.overflow = 'hidden';
+  openModal('key-modal');
 }
 
 function closeKeyModal() {
-  document.getElementById('key-modal').classList.remove('active');
-  document.body.style.overflow = '';
+  closeModal('key-modal');
   currentSubUrl = '';
 }
 
@@ -1205,6 +1285,48 @@ async function pollPendingRenewal() {
   await loadSubscriptions();
 }
 
+// ————————————————— ПОКУПКА ADD-ON —————————————————
+
+// Polling статуса платного add-on после возврата с оплаты
+// (тот же UX, что у продления: редирект → возврат → опрос статуса).
+async function pollPendingAddon() {
+  let raw;
+  try { raw = sessionStorage.getItem('pendingAddon'); } catch (e) { return; }
+  if (!raw) return;
+  let pending;
+  try { pending = JSON.parse(raw); } catch (e) { try { sessionStorage.removeItem('pendingAddon'); } catch (_) {} return; }
+  if (!pending || !pending.addon_id) return;
+
+  const addonId = pending.addon_id;
+  const maxAttempts = 20; // ~40 секунд
+  let finalStatus = null;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const data = await apiFetch(`/api/account/addon/${encodeURIComponent(addonId)}/status`);
+      const status = data && data.status;
+      if (status && status !== 'pending') {
+        finalStatus = status;
+        break;
+      }
+    } catch (e) {
+      // Ещё не готов / сеть — просто ждём следующую итерацию
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  try { sessionStorage.removeItem('pendingAddon'); } catch (e) {}
+
+  if (finalStatus === 'active') {
+    showToast('Доп. устройства подключены 🎉');
+  } else if (finalStatus === 'cancelled' || finalStatus === 'expired') {
+    showToast('Оплата не прошла. Попробуйте ещё раз.', 'error');
+  } else {
+    showToast('Статус оплаты уточняется. Если платёж прошёл — устройства уже подключены.');
+  }
+  closeAddonModal();
+  await loadSubscriptions();
+}
+
 // ————————————————— СТАТИСТИКА —————————————————
 
 function formatBytes(bytes) {
@@ -1217,11 +1339,11 @@ function formatBytes(bytes) {
 }
 
 function closeStatsModal() {
-  document.getElementById('stats-modal').classList.remove('active');
+  closeModal('stats-modal');
 }
 
 async function showStats(id) {
-  document.getElementById('stats-modal').classList.add('active');
+  openModal('stats-modal');
   document.getElementById('stats-modal-content').innerHTML = `
     <div class="load-block">
       <div class="spinner"></div>
@@ -1281,11 +1403,12 @@ function openRenameModal(id, currentName) {
   const err = document.getElementById('rename-error');
   err.classList.add('hidden');
   err.textContent = '';
-  document.getElementById('rename-modal').classList.add('active');
+  openModal('rename-modal');
+  document.getElementById('rename-input').focus();
 }
 
 function closeRenameModal() {
-  document.getElementById('rename-modal').classList.remove('active');
+  closeModal('rename-modal');
   renameOrderId = null;
 }
 
@@ -1318,7 +1441,9 @@ async function submitRename() {
 // ————————————————— ПЕРЕВЫПУСК КЛЮЧА —————————————————
 
 async function rekeySubscription(id, btn) {
-  if (!confirm('Перевыпустить ключ? Старый ключ перестанет работать, трафик и настройки сохранятся.')) return;
+  if (!(await uiConfirm('Старый ключ перестанет работать. Трафик и настройки сохранятся.', {
+    title: 'Перевыпустить ключ?', okText: 'Перевыпустить', danger: true
+  }))) return;
   const original = btn ? btn.innerHTML : '';
   if (btn) {
     btn.disabled = true;
@@ -1355,7 +1480,9 @@ async function rekeySubscription(id, btn) {
 // ————————————————— УДАЛЕНИЕ —————————————————
 
 async function deleteSubscription(id, btn) {
-  if (!confirm('Удалить подписку? Ключ будет удалён из панели. Действие необратимо.')) return;
+  if (!(await uiConfirm('Ключ будет удалён из панели. Действие необратимо.', {
+    title: 'Удалить подписку?', okText: 'Удалить', danger: true
+  }))) return;
   const original = btn ? btn.innerHTML : '';
   if (btn) {
     btn.disabled = true;
@@ -1489,14 +1616,14 @@ let addonOrderId = null;
 
 function openAddonModal(orderId) {
   addonOrderId = orderId;
-  document.getElementById('addon-modal').classList.add('active');
+  openModal('addon-modal');
   document.getElementById('addon-error').classList.add('hidden');
   document.getElementById('addon-price-info').style.display = 'none';
   document.getElementById('addon-cancel-section').style.display = 'none';
   document.getElementById('addon-buy-btn').style.display = '';
   document.getElementById('addon-options').style.display = '';
   document.getElementById('addon-sub-info').textContent = 'Загрузка...';
-  // Проверяем активные add-on'ы
+  // Проверяем активные add-on'ы + получаем каталог пакетов (цены от сервера, №45)
   apiFetch(`/api/account/subscription/${orderId}/addons`).then(data => {
     const active = (data.addons || []).find(a => a.status === 'active');
     const totalExtra = data.total_extra_devices || 0;
@@ -1505,6 +1632,7 @@ function openAddonModal(orderId) {
       document.getElementById('addon-cancel-section').style.display = '';
       document.getElementById('addon-sub-info').textContent += ` (доп. ${active.extra_devices} уже подключены)`;
     }
+    renderAddonOptions((data.catalog || []));
     updateAddonPrice();
   }).catch(() => {
     document.getElementById('addon-sub-info').textContent = '';
@@ -1513,8 +1641,26 @@ function openAddonModal(orderId) {
 }
 
 function closeAddonModal() {
-  document.getElementById('addon-modal').classList.remove('active');
+  closeModal('addon-modal');
   addonOrderId = null;
+}
+
+// Рендер опций пакетов из каталога сервера (№45): названия и цены не
+// захардкожены, а приходят из settings.device_addons через /addons.
+function renderAddonOptions(catalog) {
+  const box = document.getElementById('addon-options');
+  if (!box || !catalog.length) return;
+  box.innerHTML = catalog.map(cfg => `
+    <label class="addon-option">
+      <input type="radio" name="addon_type" value="${escapeHtml(cfg.type)}" onchange="updateAddonPrice()">
+      <div>
+        <div style="font-weight:600;">${escapeHtml(cfg.title)}</div>
+        <div style="font-size:13px;color:var(--text-3);">${Number(cfg.base_price) || 0} ₽/мес</div>
+      </div>
+    </label>
+  `).join('');
+  const first = box.querySelector('input[name="addon_type"]');
+  if (first) first.checked = true;
 }
 
 async function updateAddonPrice() {
@@ -1556,7 +1702,13 @@ async function buyAddon() {
     });
 
     if (data.payment_url) {
-      // Баг3: после редиректа на оплату, polling будет через /api/account/addon/{id}/status
+      // Платный add-on: запоминаем заявку и редиректим на оплату.
+      // После возврата в ЛК pollPendingAddon() опросит статус.
+      if (data.addon_id) {
+        try {
+          sessionStorage.setItem('pendingAddon', JSON.stringify({ addon_id: data.addon_id, order_id: addonOrderId }));
+        } catch (e) { /* sessionStorage недоступен — пропускаем polling */ }
+      }
       window.location.href = data.payment_url;
     } else {
       btn.textContent = '✅ Активировано';
@@ -1573,14 +1725,17 @@ async function buyAddon() {
 }
 
 async function cancelAddon() {
-  if (!addonOrderId || !confirm('Отменить доп. устройства? Лимит уменьшится в день продления подписки.')) return;
+  if (!addonOrderId) return;
+  if (!(await uiConfirm('Лимит устройств уменьшится в день продления подписки.', {
+    title: 'Отменить доп. устройства?', okText: 'Отменить', danger: true
+  }))) return;
   try {
     await apiFetch(`/api/account/subscription/${addonOrderId}/addon/cancel`, { method: 'POST' });
     showToast('Доп. устройства будут отменены при следующем продлении');
     closeAddonModal();
     loadSubscriptions();
   } catch (e) {
-    alert('Ошибка: ' + e.message);
+    showToast('Ошибка: ' + e.message, 'error');
   }
 }
 
@@ -1601,8 +1756,9 @@ document.addEventListener('click', (e) => {
   else if (action === 'delete') deleteSubscription(id, btn);
 });
 
-// Закрытие модалок по Escape
+// Закрытие модалок по Escape + Tab-ловушка внутри открытой модалки
 document.addEventListener('keydown', (e) => {
+  trapFocusInModal(e);
   if (e.key === 'Escape') {
     closeKeyModal();
     closeStatsModal();
@@ -1752,7 +1908,7 @@ function updateTelegramBindStatus(telegramId) {
 async function openTelegramBindModal() {
   const modal = document.getElementById('tg-bind-modal');
   if (!modal) return;
-  modal.classList.add('active');
+  openModal('tg-bind-modal');
   const errEl = document.getElementById('tg-bind-error');
   errEl.classList.add('hidden');
 
@@ -1790,8 +1946,7 @@ function _tgReloadWidget() {
 }
 
 function closeTelegramBindModal() {
-  const modal = document.getElementById('tg-bind-modal');
-  if (modal) modal.classList.remove('active');
+  closeModal('tg-bind-modal');
   // Возвращаем виджет в форму логина, чтобы он работал и после выхода из ЛК.
   _tgMoveWidgetTo('telegram-login-box');
   window._tgBind = false;
@@ -1803,8 +1958,9 @@ async function init() {
   initTelegramWidget();
   if (getToken()) {
     await enterDashboard();
-    // Если вернулись с оплаты продления — опрашиваем его статус
+    // Если вернулись с оплаты — опрашиваем статус (продление или add-on)
     pollPendingRenewal();
+    pollPendingAddon();
     // Автоприменение реферального кода для уже авторизованных пользователей
     const params = new URLSearchParams(window.location.search);
     const refCode = params.get('ref');
@@ -1829,6 +1985,51 @@ async function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+</script>
+
+<!-- Кастомное подтверждение вместо нативного confirm()/alert() (№23 из правки.txt) -->
+<div id="ui-confirm-modal" class="modal-overlay" onclick="if(event.target===this)uiConfirmResolve(false)">
+  <div class="modal" role="alertdialog" aria-modal="true" aria-label="Подтверждение действия" style="max-width:380px;text-align:center;">
+    <div class="key-head">
+      <h4 class="key-title" id="ui-confirm-title">Подтверждение</h4>
+      <p class="key-sub" id="ui-confirm-text" style="white-space:pre-line;"></p>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <button class="btn btn-outline" onclick="uiConfirmResolve(false)">Отмена</button>
+      <button class="btn btn-dark" id="ui-confirm-ok" onclick="uiConfirmResolve(true)">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ————————————————— ПОДТВЕРЖДЕНИЕ ДЕЙСТВИЙ (вместо confirm/alert) —————————————————
+
+let _uiConfirmResolve = null;
+
+function uiConfirm(message, opts) {
+  opts = opts || {};
+  document.getElementById('ui-confirm-title').textContent = opts.title || 'Подтверждение';
+  document.getElementById('ui-confirm-text').textContent = message;
+  const okBtn = document.getElementById('ui-confirm-ok');
+  okBtn.textContent = opts.okText || 'Подтвердить';
+  okBtn.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-dark');
+  openModal('ui-confirm-modal');
+  return new Promise(resolve => { _uiConfirmResolve = resolve; });
+}
+
+function uiConfirmResolve(value) {
+  closeModal('ui-confirm-modal');
+  const r = _uiConfirmResolve;
+  _uiConfirmResolve = null;
+  if (r) r(value);
+}
+
+// Escape закрывает confirm-модалку (если она открыта поверх остальных)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('ui-confirm-modal').classList.contains('active')) {
+    uiConfirmResolve(false);
+  }
+});
 </script>
 </body>
 </html>

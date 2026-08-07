@@ -26,7 +26,7 @@ def run(coro):
     return asyncio.run(coro)
 
 EMAIL = "user@test.local"
-PASSWORD = "secret123"
+PASSWORD = "secret12345"  # >= password_min_length (10)
 
 
 # ————————————————— helpers —————————————————
@@ -136,6 +136,28 @@ def test_webhook_renewal_ok(client, mocks):
     assert run(get_renewal_by_id(renewal_id))["status"] == "active"
 
 
+def test_webhook_rejected_from_unlisted_ip(client, mocks, monkeypatch):
+    """IP-allowlist: вебхук с IP вне списка отклоняется ещё до обработки."""
+    from config import settings as s
+    monkeypatch.setattr(s, "webhook_ip_allowlist", ["192.0.2.1"])
+
+    r = client.post(
+        "/webhook/platega",
+        json={"id": "tx-fake", "payload": "order-1"},
+    )
+    assert r.status_code == 403, r.text
+
+
+def test_webhook_accepted_when_allowlist_empty(client, mocks):
+    """Пустой allowlist = проверка выключена (dev-режим), вебхук обрабатывается."""
+    r = client.post(
+        "/webhook/platega",
+        json={"id": "tx-nonexistent", "payload": "order-1"},
+    )
+    # Провайдер-fake возвращает succeeded, но заказ не найден — не падаем, а отвечаем ok
+    assert r.status_code == 200, r.text
+
+
 def test_managed_email_guard():
     """managed_email_guard: отказываемся мутировать неменеджерские email."""
     assert is_managed_panel_email("user@vpn.local") is True
@@ -190,3 +212,49 @@ async def _reset_order_for_fulfill(oid):
             (f"tx-{oid}", oid),
         )
         await db.commit()
+
+
+def test_addon_payment_return_url_is_account(client, mocks):
+    """№20: платёж за add-on ведёт возврат на /account.html (не /payment/success)."""
+    from tests.conftest import FakeProvider
+    from database import mark_paid
+
+    provider, calls = mocks
+    token, uid, oid = make_user_and_sub(client)
+    run(mark_paid(oid))  # подписка оплачена → аддон можно купить
+
+    r = client.post(f"/api/account/subscription/{oid}/addon",
+                    json={"addon_type": "devices_5"}, headers=auth(token))
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data.get("payment_url"), data
+    # ЛК сам поллит статус по JWT — return_url должен указывать на ЛК.
+    assert FakeProvider.last_return_url == "https://test.local/account.html", \
+        FakeProvider.last_return_url
+
+
+def test_renew_payment_return_url_is_account(client, mocks):
+    """№20: платёж за продление ведёт возврат на /account.html."""
+    from tests.conftest import FakeProvider
+
+    provider, calls = mocks
+    token, uid, oid = make_user_and_sub(client)
+
+    r = client.post(f"/api/account/renew/{oid}", headers=auth(token))
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data.get("payment_url"), data
+    assert FakeProvider.last_return_url == "https://test.local/account.html", \
+        FakeProvider.last_return_url
+
+
+def test_order_payment_return_url_defaults_to_success(client, mocks):
+    """№20: обычный заказ на витрине по-прежнему возвращает на /payment/success."""
+    from tests.conftest import FakeProvider
+
+    provider, calls = mocks
+    r = client.post("/api/order/create",
+                    json={"tariff": "quantum_month", "addon_type": ""})
+    assert r.status_code == 200, r.text
+    assert r.json().get("payment_url")
+    assert FakeProvider.last_return_url == "", FakeProvider.last_return_url

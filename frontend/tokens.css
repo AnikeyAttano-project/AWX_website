@@ -1,0 +1,132 @@
+/* ============================================================
+   AWX-WEB-lite · Дизайн-токены «Светлый премиум»
+   Единый источник правды для index.html, account.html, admin.html
+   Подключение: <link rel="stylesheet" href="tokens.css">
+   ------------------------------------------------------------
+   Три слоя (по design-system скиллу):
+     1. Primitive  — сырые значения (цвета, шаги шрифта)
+     2. Semantic   — роли (--surface, --accent, ...)
+     3. Component  — готовые компонентные токены (--shadow-card, --radius-lg, ...)
+   ============================================================ */
+
+/* ---------- 1. PRIMITIVE · палитра ---------- */
+:root{
+  /* Зелёная гамма (премиум-глубокий изумруд) */
+  --green-50:#F0F7F4;
+  --green-100:#DCEBE4;
+  --green-200:#B9D7CB;
+  --green-300:#8FBBA8;
+  --green-400:#5C9A81;
+  --green-500:#2F7A5E;
+  --green-600:#1F5F52;   /* фирменный акцент проекта */
+  --green-700:#17493F;
+  --green-800:#123932;
+  --green-900:#0D2B26;
+
+  /* Тёплая нейтральная гамма (кремово-бежевый фон) */
+  --stone-50:#FBF9F6;
+  --stone-100:#F4F1EB;
+  --stone-200:#E9E4DA;
+  --stone-300:#D8D2C6;
+  --stone-400:#B4AC9E;
+  --stone-500:#8A8273;
+  --stone-600:#6B6459;
+  --stone-700:#514C43;
+  --stone-800:#38342E;
+  --stone-900:#232019;
+
+  /* Системные цвета */
+  --red-500:#D64545;
+  --red-600:#B92F2F;
+  --red-50:#FBEFEF;
+  --amber-500:#D9A406;
+  --amber-600:#B88906;
+  --amber-50:#FCF5DE;
+  --blue-500:#4C5EA8;
+  --blue-600:#3D4C8C;
+  --blue-50:#EEF0FA;
+
+  /* Статистика / графики (серия) */
+  --serie-1:#2F7A5E;  /* зелёный  */
+  --serie-2:#C77B2A;  /* янтарь   */
+  --serie-3:#4C5EA8;  /* индиго   */
+  --serie-4:#A85C7C;  /* розовый  */
+  --serie-5:#1F5F52;  /* акцент   */
+
+  /* ---------- 2. SEMANTIC · роли ---------- */
+  --bg:          var(--stone-50);
+  --surface:     #FFFFFF;
+  --surface-2:   var(--stone-100);
+  --surface-3:   var(--stone-200);
+  --border:      var(--stone-200);
+  --border-strong:var(--stone-300);
+
+  --text:        var(--stone-900);
+  --text-2:      var(--stone-600);
+  /* Третичный текст — затемнён до #6E6A61: WCAG AA ≥4.5:1 на белом/кремовом.
+     Раньше stone-400 (#B4AC9E ≈2.6:1) — не проходил контраст для обычного текста. */
+  --text-3:      #6E6A61;
+
+  --accent:      var(--green-600);
+  --accent-hover:var(--green-700);
+  --accent-soft: var(--green-50);
+  --on-accent:   #FFFFFF;
+
+  --ok:          var(--green-600);
+  --ok-soft:     var(--green-50);
+  --warn:        var(--amber-600);
+  --warn-soft:   var(--amber-50);
+  --err:         var(--red-600);
+  --err-soft:    var(--red-50);
+  --info:        var(--blue-600);
+  --info-soft:   var(--blue-50);
+
+  /* Алиасы для обратной совместимости (старые имена в JS/HTML) */
+  --accent-bg:   var(--accent-soft);
+  --c1: var(--serie-1);  --c2: var(--serie-2);
+  --c3: var(--serie-3);  --c4: var(--serie-4);
+  --danger: var(--err);
+
+  /* Стекло (glassmorphism) — премиальная лёгкость */
+  --glass-bg:        rgba(255,255,255,.58);
+  --glass-bg-strong: rgba(255,255,255,.78);
+  --glass-border:    rgba(255,255,255,.85);
+  --glass-blur:      18px;
+  --glass-shadow:    0 8px 32px rgba(35,32,25,.08);
+
+  /* ---------- 3. COMPONENT · компонентные токены ---------- */
+
+  /* Типографика */
+  --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Радиусы */
+  --radius-xs:6px;
+  --radius-sm:8px;
+  --radius-md:12px;
+  --radius-lg:16px;
+  --radius-xl:20px;
+  --radius-full:999px;
+
+  /* Тени — мягкие, тёплые, многослойные */
+  --shadow-xs: 0 1px 2px rgba(35,32,25,.04);
+  --shadow-sm: 0 1px 3px rgba(35,32,25,.06), 0 1px 2px rgba(35,32,25,.04);
+  --shadow-md: 0 4px 12px rgba(35,32,25,.07), 0 2px 4px rgba(35,32,25,.05);
+  --shadow-lg: 0 12px 32px rgba(35,32,25,.10), 0 4px 12px rgba(35,32,25,.06);
+  --shadow-xl: 0 24px 64px rgba(35,32,25,.16), 0 8px 20px rgba(35,32,25,.08);
+  --shadow-card: var(--shadow-sm);
+  --shadow-card-hover: var(--shadow-md);
+  --shadow-modal: var(--shadow-xl);
+
+  /* Фокус-кольцо (доступность) */
+  --focus-ring: 0 0 0 3px rgba(31,95,82,.22);
+
+  /* Движение */
+  --ease: cubic-bezier(.22,.61,.36,1);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 300ms;
+
+  /* Сайдбар */
+  --sidebar-w: 232px;
+}

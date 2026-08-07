@@ -31,7 +31,7 @@ os.environ["PLATEGA_MERCHANT_ID"] = "test-merchant"
 os.environ["PLATEGA_SECRET"] = "test-secret"
 os.environ["SITE_BASE_URL"] = "https://test.local"
 os.environ["DEBUG_SANDBOX_ENABLED"] = "true"
-os.environ["ADMIN_API_KEY"] = "test-admin-key"
+os.environ["ADMIN_API_KEY"] = "test-admin-key-0123456789abcdefghijklmnopqrstuvwxyz"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -54,9 +54,11 @@ class FakeProvider:
     name = "fake"
     status = "pending"
     create_calls = 0
+    last_return_url = ""
 
-    async def create_payment(self, amount, order_id, description, capability_token=""):
+    async def create_payment(self, amount, order_id, description, capability_token="", return_url=""):
         type(self).create_calls += 1
+        type(self).last_return_url = return_url
         return {
             "transaction_id": f"tx-{order_id}",
             "payment_url": f"https://pay.local/{order_id}",
@@ -120,6 +122,7 @@ def mocks(monkeypatch):
     provider = FakeProvider()
     provider.status = "pending"
     FakeProvider.create_calls = 0
+    FakeProvider.last_return_url = ""
     calls = {"renew_client": 0, "update_client_limit": 0, "create_client": 0}
 
     async def _fake_renew_client(email, add_days):

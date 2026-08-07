@@ -870,7 +870,10 @@ async def validate_promo_code(code: str, tariff_slug: str = None,
         except ValueError:
             pass
     if promo.get("tariff_group"):
-        if tariff_group and promo["tariff_group"] != tariff_group:
+        # Промо ограничен группой: применяется ТОЛЬКО к тарифам этой группы.
+        # Раньше при tariff_group=None (тариф без группы) проверка пропускалась —
+        # промо «на группу» срабатывало на любом тарифе без группы. Теперь строго.
+        if promo["tariff_group"] != tariff_group:
             return None, "Промокод не действует на этот тариф"
     return promo, None
 
@@ -885,13 +888,22 @@ def compute_promo_discount(promo: dict, total: float) -> tuple[float, float]:
     return discount, round(max(0, total - discount), 2)
 
 
-async def use_promo_code(promo_id: int) -> None:
-    """Инкрементирует счётчик использований промо-кода."""
+async def use_promo_code(promo_id: int) -> bool:
+    """Инкрементирует счётчик использований промо-кода (атомарно, без TOCTOU).
+
+    UPDATE ... WHERE used_count < max_uses — инкремент и проверка лимита в одной
+    транзакции: два параллельных fulfill не превысят max_uses (раньше сначала
+    читали, потом писали — гонка). Возвращает True, если счётчик увеличен.
+    """
     async with _db() as db:
-        await db.execute(
-            "UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ?", (promo_id,)
+        cur = await db.execute(
+            "UPDATE promo_codes SET used_count = used_count + 1 "
+            "WHERE id = ? AND (max_uses IS NULL OR max_uses = 0 "
+            "OR used_count < max_uses)",
+            (promo_id,),
         )
         await db.commit()
+        return cur.rowcount > 0
 
 
 async def claim_trial(user_id: str, expires_at: str) -> bool:
@@ -1416,6 +1428,47 @@ async def get_total_extra_devices(order_id: str) -> int:
         )
         row = await cur.fetchone()
         return row[0] if row else 0
+
+
+async def finalize_pending_addon(addon_id: str):
+    """pending → cancelled: платёж аддона отменён/протух.
+
+    Раньше такой аддон навсегда оставался 'pending', и dedup в purchase_addon
+    блокировал повторную покупку того же типа устройств. WHERE status='pending'
+    защищает активный аддон (его платёж уже успешен — вебхук не должен его гасить).
+    """
+    async with _db() as db:
+        await db.execute(
+            "UPDATE device_addons SET status = 'cancelled' "
+            "WHERE id = ? AND status = 'pending'",
+            (addon_id,),
+        )
+        await db.commit()
+
+
+async def expire_stale_pending(hours: int = 24) -> tuple[int, int]:
+    """Помечает зависшие pending-заявки как 'cancelled' (платёж так и не подтверждён).
+
+    Продления и аддоны: если pending-заявка живёт дольше hours часов — считаем её
+    брошенной (пользователь не оплатил) и финализируем. Иначе дедуп
+    (get_pending_renewal_for_order / pending_or_active в purchase_addon) блокировал
+    новую покупку/продление навсегда. Returns: (expired_renewals, expired_addons).
+    """
+    async with _db() as db:
+        cur = await db.execute(
+            "UPDATE renewals SET status = 'cancelled' "
+            "WHERE status = 'pending' AND created_at < datetime('now', ?)",
+            (f"-{hours} hours",),
+        )
+        renewals = cur.rowcount
+        cur = await db.execute(
+            "UPDATE device_addons SET status = 'cancelled' "
+            "WHERE status = 'pending' AND created_at < datetime('now', ?)",
+            (f"-{hours} hours",),
+        )
+        addons = cur.rowcount
+        await db.commit()
+        return renewals, addons
 
 
 # ————————————————— Платные продления (renewals) —————————————————
