@@ -101,6 +101,10 @@ async def add_security_headers(request: Request, call_next):
             "base-uri 'self'; "
             "frame-ancestors 'none'"
         )
+    # JSON-ответы API не кэшируем: статистика подписки, список подписок и пр.
+    # должны всегда приходить свежими, а не из браузерного/прокси-кэша.
+    if response.headers.get("content-type", "").startswith("application/json"):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
