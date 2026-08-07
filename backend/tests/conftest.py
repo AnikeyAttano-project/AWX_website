@@ -43,6 +43,7 @@ import shared_state
 import payment_lifecycle
 import auth as auth_module
 from database import _db, init_db
+from payment_providers import PaymentError
 
 
 def run(coro):
@@ -56,10 +57,13 @@ class FakeProvider:
     status = "pending"
     create_calls = 0
     last_return_url = ""
+    fail_create = False  # №39: True → create_payment бросает PaymentError
 
     async def create_payment(self, amount, order_id, description, capability_token="", return_url=""):
         type(self).create_calls += 1
         type(self).last_return_url = return_url
+        if self.fail_create:
+            raise PaymentError("Mock: create_payment failed")
         return {
             "transaction_id": f"tx-{order_id}",
             "payment_url": f"https://pay.local/{order_id}",

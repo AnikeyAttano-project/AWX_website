@@ -18,20 +18,32 @@
 ФАЗА 3 — бэкенд-полировка (№31–39)
   [x] №31 JWT token_version + logout/revoke (POST /api/auth/logout)
   [x] №32 убрать email-верификацию (register → сразу verified)
-  [ ] №34 rate-limit TTL janitor
-  [ ] №35 provider fallback не угадывает
-  [ ] №36 статус cancelled отдельно от error
-  [ ] №37 docstring order-status
-  [ ] №38 валидация до rate-limit
-  [ ] №39 сиротские заказы при сбое create_payment
+  [x] №34 rate-limit TTL janitor + разделение корзин по скоупам
+      (запись хранит своё окно; джанетор чистит ключи с истёкшими записями;
+      лимиты auth/order/demo/status/trial больше не мешают друг другу)
+  [x] №35 provider fallback не угадывает
+      (get_provider: strip+lower, неизвестное имя — PaymentError вместо
+      молчаливого Platega; вызовы обёрнуты в понятный 502)
+  [x] №36 статус cancelled отдельно от error
+      (вебхук: отменённый/истёкший платёж обычного заказа → 'cancelled',
+      а не 'error'; mark_order_cancelled стал реально использоваться)
+  [x] №37 docstring order-status
+      (эндпоинт /api/order/{id}/status документирует значения status:
+       pending/paid/error/cancelled + sub_url/ready)
+  [x] №38 валидация до rate-limit
+      (register/order-create/demo: формат и тариф валидируются ДО лимита,
+      мусор не сжигает лимит)
+  [x] №39 сиротские заказы при сбое create_payment
+      (при PaymentError и любом непредвиденном сбое созданный заказ удаляется;
+      раньше оставался pending-сирота без tx_id, которого cleanup не чистил)
+
+ФАЗА 3 — ГОТОВА (все №31–39)
 
 ФИНАЛ — тесты, коммит, документы, memory
   [ ] Прогон тестов, итоговый коммит, docs, память
 
 —— Замечание по тестам (сделано 2026-08-08) ——
 В conftest.py добавлен сброс in-memory rate-limit (rate_limit_storage) и
-auth-локаута (_failed_logins) между тестами. Без этого тесты флакали:
-все запросы идут с общего IP "testclient", а check_rate_limit хранит
-ЕДИНУЮ корзину на IP для всех эндпоинтов (register/login/order-create
-считаются вместе). На боевом это значит: 10 любых запросов (напр. попытки
-регистрации) могут перекрыть лимит создания заказов. Надо решить в №34.
+auth-локаута (_failed_logins) между тестами, иначе тесты флакали на общем
+IP "testclient". Решено в №34: корзины разделены по скоупам, так что
+register/login/order-create больше не считаются вместе.

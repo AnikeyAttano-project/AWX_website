@@ -52,7 +52,11 @@ from payment_lifecycle import PaymentLifecycle
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Rate limiting — хранилище запросов по IP
+# Rate limiting — хранилище запросов по ключу.
+# Ключ = "scope:ident": scope отделяет разные эндпоинты (auth/order/demo/status/
+# trial/renew-payment), чтобы лимиты не мешали друг другу; ident — IP или user_id.
+# Значение — список кортежей (timestamp, window_minutes): окно хранится в самой
+# записи, поэтому TTL-джанетор корректно чистит и 1-минутные, и 1440-минутные ключи.
 rate_limit_storage = defaultdict(list)
 
 
@@ -78,46 +82,58 @@ def get_real_ip(request: Request) -> str:
     return peer
 
 
-# После какого числа ключей в rate_limit_storage запускается глобальная чистка
-# (удаление пустых ключей). Ограничивает память: без этого каждый уникальный IP
-# оставлял бы ключ навсегда.
+# После какого числа ключей запускается глобальная TTL-чистка.
 _RATE_LIMIT_MAX_KEYS = 5000
 _rate_limit_calls = 0
 
 
 def _prune_rate_limit_keys():
-    """Удаляет ключи с пустыми списками (все записи истекли)."""
-    empty = [ip for ip, ts in rate_limit_storage.items() if not ts]
-    for ip in empty:
-        del rate_limit_storage[ip]
+    """TTL-джанетор: удаляет ключи, у которых ВСЕ записи истекли (№34).
 
-
-def check_rate_limit(ip: str, max_requests: int = 10, window_minutes: int = 60) -> bool:
+    Раньше удалялись только ключи с пустыми списками, но список опустошается
+    лишь когда этот же ключ обращается снова (check_rate_limit подрезает его
+    сам) — молчавший ключ висел с просроченной записью навсегда, память росла.
+    Теперь удаляем ключ, если каждая запись старше СВОЕГО окна (окно лежит в
+    самой записи), поэтому чистятся и 1-минутные status-ключи, и 1440-минутный
+    trial.
     """
-    Проверяет rate limit для IP адреса.
+    now = datetime.now()
+    expired = [
+        key for key, entries in rate_limit_storage.items()
+        if not entries or all(ts <= now - timedelta(minutes=win) for ts, win in entries)
+    ]
+    for key in expired:
+        del rate_limit_storage[key]
+
+
+def check_rate_limit(key: str, max_requests: int = 10, window_minutes: int = 60) -> bool:
+    """
+    Проверяет rate limit для ключа (обычно "scope:ip" или "scope:user_id").
     Возвращает True если запрос разрешён, False если превышен лимит.
     """
     global _rate_limit_calls
     now = datetime.now()
-    window_start = now - timedelta(minutes=window_minutes)
 
-    # Очищаем старые записи
-    rate_limit_storage[ip] = [
-        req_time for req_time in rate_limit_storage[ip]
-        if req_time > window_start
+    # Очищаем записи, истёкшие по собственному окну.
+    entries = [
+        (ts, win) for ts, win in rate_limit_storage[key]
+        if ts > now - timedelta(minutes=win)
     ]
 
-    # Периодическая глобальная чистка пустых ключей (примерно раз в 100 вызовов)
+    # Периодическая глобальная TTL-чистка (примерно раз в 100 вызовов),
+    # только когда ключей накопилось много.
     _rate_limit_calls += 1
     if _rate_limit_calls % 100 == 0 and len(rate_limit_storage) > _RATE_LIMIT_MAX_KEYS:
         _prune_rate_limit_keys()
 
-    # Проверяем лимит
-    if len(rate_limit_storage[ip]) >= max_requests:
+    # Проверяем лимит (подрезанный список сохраняем, чтобы не копить хлам)
+    if len(entries) >= max_requests:
+        rate_limit_storage[key] = entries
         return False
 
     # Записываем новый запрос
-    rate_limit_storage[ip].append(now)
+    entries.append((now, window_minutes))
+    rate_limit_storage[key] = entries
     return True
 
 

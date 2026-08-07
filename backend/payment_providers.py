@@ -195,12 +195,26 @@ class YooKassaProvider(PaymentProvider):
 
 # ————————————————— Фабрика —————————————————
 
+_KNOWN_PROVIDERS = ("platega", "yookassa")
+
+
 def get_provider(name: str = "") -> PaymentProvider:
-    """Возвращает провайдера по имени (или активного из settings)."""
-    provider_name = (name or settings.payment_provider or "platega").lower()
-    if provider_name == "yookassa":
+    """Возвращает провайдера по имени (или активного из settings).
+
+    №35: провайдера не угадываем. Раньше любое нераспознанное имя (опечатка,
+    лишний пробел, кривой PAYMENT_PROVIDER из env) молча превращалось в Platega —
+    платежи тихо уходили не тому провайдеру. Теперь неизвестное имя — PaymentError,
+    который вызывающие превращают в понятную ошибку 502.
+    """
+    requested = (name or settings.payment_provider or "platega").strip().lower()
+    if requested == "platega":
+        return PlategaProvider()
+    if requested == "yookassa":
         return YooKassaProvider()
-    return PlategaProvider()
+    raise PaymentError(
+        f"Неизвестный платёжный провайдер {requested!r}"
+        f" (допустимо: {', '.join(_KNOWN_PROVIDERS)})"
+    )
 
 
 def get_active_provider() -> PaymentProvider:

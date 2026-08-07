@@ -16,6 +16,7 @@ from database import (
     get_active_subscription, get_device_addons_for_order,
     activate_pending_addons_for_order, create_device_addon,
     set_order_user, validate_promo_code, compute_promo_discount,
+    delete_order,
 )
 from payment_providers import PaymentError
 
@@ -125,12 +126,8 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     Создаёт заказ в БД и платёжную ссылку в Platega на ИТОГОВУЮ сумму.
     Если пользователь авторизован — привязывает заказ к аккаунту.
     """
-    # Rate limiting: 10 заказов в час с одного IP
-    client_ip = shared_state.get_real_ip(request)
-    if not shared_state.check_rate_limit(client_ip, max_requests=10, window_minutes=60):
-        logger.warning("Rate limit exceeded for IP: %s", client_ip)
-        raise HTTPException(429, "Слишком много запросов. Попробуйте позже.")
-
+    # Валидация ДО rate-limit (№38): неизвестный тариф/add-on → 400 без сжигания
+    # лимита, чтобы мусорный трафик не блокировал легитимные заказы.
     tariff = settings.tariffs.get(req.tariff)
     if not tariff:
         raise HTTPException(400, "Неизвестный тариф")
@@ -143,6 +140,12 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     # device_addons.user_id NOT NULL → доп. устройства доступны только авторизованным
     if addon_cfg and not user:
         raise HTTPException(401, "Войдите в аккаунт, чтобы добавить устройства")
+
+    # Rate limiting: 10 заказов в час с одного IP
+    client_ip = shared_state.get_real_ip(request)
+    if not shared_state.check_rate_limit(f"order:{client_ip}", max_requests=10, window_minutes=60):
+        logger.warning("Rate limit exceeded for IP: %s", client_ip)
+        raise HTTPException(429, "Слишком много запросов. Попробуйте позже.")
 
     # Итоговая сумма: тариф + add-on (скидка тарифа применяется и к доп. устройствам).
     total, addon_price = shared_state._compute_order_total(req.tariff, req.addon_type)
@@ -161,7 +164,11 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
     order_id = uuid.uuid4().hex[:12]
     # Capability-токен: случайный токен для доступа к статусу заказа без авторизации
     capability_token = uuid.uuid4().hex
-    provider = shared_state.get_active_provider()
+    try:
+        provider = shared_state.get_active_provider()
+    except PaymentError as e:  # №35: провайдера не угадываем — конфиг кривой
+        logger.error("Payment provider config error: %s", e)
+        raise HTTPException(502, str(e))
     await create_order(
         order_id, req.tariff, total, capability_token,
         promo_code=(promo["code"] if promo else None),
@@ -181,8 +188,18 @@ async def api_create_order(req: CreateOrderRequest, request: Request, user: dict
             capability_token=capability_token,
         )
     except PaymentError as e:
+        # №39: платёж не создан — удаляем только что созданный заказ, иначе
+        # останется «сирота»: pending без tx_id, который никогда не выполнится
+        # и не подпадёт под cleanup_expired_orders (он чистит paid/error).
+        await delete_order(order_id)
         logger.error("Payment provider error: %s", e)
         raise HTTPException(502, str(e))
+    except Exception:
+        # Сетевой/непредвиденный сбой провайдера (httpx не обёрнут в PaymentError) —
+        # заказ всё равно не оставляем; ошибку пробрасываем как есть (500).
+        await delete_order(order_id)
+        logger.exception("Unexpected payment provider failure for order %s", order_id)
+        raise
 
     await save_platega_tx(order_id, payment["transaction_id"])
 
@@ -234,15 +251,16 @@ async def api_demo_order(req: DemoOrderRequest, request: Request, user: dict = D
     if not hmac.compare_digest(req.password, settings.demo_password):
         raise HTTPException(403, "Неверный пароль демо-оплаты")
 
-    # Rate-limit: 3 demo-заказа в час с одного IP (защита от абьюза)
-    client_ip = shared_state.get_real_ip(request)
-    if not shared_state.check_rate_limit(client_ip, max_requests=3, window_minutes=60):
-        logger.warning("Demo rate limit exceeded for IP: %s", client_ip)
-        raise HTTPException(429, "Слишком много демо-запросов. Попробуйте позже.")
-
+    # Валидация ДО rate-limit (№38): неизвестный тариф → 400, лимит не тратим.
     tariff = settings.tariffs.get(req.tariff)
     if not tariff:
         raise HTTPException(400, "Неизвестный тариф")
+
+    # Rate-limit: 3 demo-заказа в час с одного IP (защита от абьюза)
+    client_ip = shared_state.get_real_ip(request)
+    if not shared_state.check_rate_limit(f"demo:{client_ip}", max_requests=3, window_minutes=60):
+        logger.warning("Demo rate limit exceeded for IP: %s", client_ip)
+        raise HTTPException(429, "Слишком много демо-запросов. Попробуйте позже.")
 
     order_id = uuid.uuid4().hex[:12]
     # Capability-токен для демо-заказа
@@ -282,10 +300,23 @@ async def api_order_status(order_id: str, request: Request, token: str = "",
 
     Авторизация: capability-токен (из query ?token=...) ИЛИ авторизованный владелец заказа.
     Если токен не передан и пользователь не авторизован — отдаём только статус без sub_url.
+
+    Поле "status" (жизненный цикл оплаты заказа):
+      - "pending"   — платёж создан/ожидается (вебхук или polling решат дальше)
+      - "paid"      — деньги подтверждены; ключ выдаётся (fulfillment_status
+                      'pending'/'processing'/'completed' — вторая ось, см. database.py)
+      - "error"     — ТЕХНИЧЕСКИЙ сбой выдачи/провайдера (можно ретраить,
+                      повторный POST /status авторизованным владельцем форсит fulfill)
+      - "cancelled" — пользователь отменил платёж или он истёк (терминальный,
+                      НЕ ретраится; отделён от "error" — №36)
+
+    Ответ (для авторизованного запроса):
+      - sub_url / qr_base64 — ключ готов (статус "paid" + fulfillment 'completed')
+      - ready=true          — ключ готов, но запрос неавторизован (sub_url не отдаём)
     """
     # Rate limiting: 30 запросов в минуту с одного IP
     client_ip = shared_state.get_real_ip(request)
-    if not shared_state.check_rate_limit(client_ip, max_requests=30, window_minutes=1):
+    if not shared_state.check_rate_limit(f"status:{client_ip}", max_requests=30, window_minutes=1):
         logger.warning("Rate limit exceeded for status endpoint, IP: %s", client_ip)
         raise HTTPException(429, "Слишком много запросов. Попробуйте позже.")
 

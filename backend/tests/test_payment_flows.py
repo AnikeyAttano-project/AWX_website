@@ -15,7 +15,7 @@ import pytest
 from xui_client import is_managed_panel_email, _require_managed_email, XuiError
 
 from database import (
-    create_order, set_order_user, save_subscription,
+    create_order, set_order_user, save_subscription, save_platega_tx,
     create_device_addon, create_renewal, get_order, get_renewal_by_id,
     get_device_addons_for_order,
 )
@@ -24,6 +24,14 @@ from database import (
 def run(coro):
     """Синхронная обёртка для async-функций БД (в синхронных тестах)."""
     return asyncio.run(coro)
+
+
+async def _count_orders():
+    from database import _db
+    async with _db() as db:
+        cur = await db.execute("SELECT COUNT(*) FROM orders")
+        row = await cur.fetchone()
+        return row[0]
 
 EMAIL = "user@test.local"
 PASSWORD = "secret12345"  # >= password_min_length (10)
@@ -156,6 +164,32 @@ def test_webhook_accepted_when_allowlist_empty(client, mocks):
     )
     # Провайдер-fake возвращает succeeded, но заказ не найден — не падаем, а отвечаем ok
     assert r.status_code == 200, r.text
+
+
+def test_webhook_cancelled_payment_marks_order_cancelled(client, mocks):
+    """№36: отменённый платёж по обычному заказу → статус 'cancelled', НЕ 'error'."""
+    provider, _ = mocks
+    provider.status = "cancelled"
+
+    oid = "o" + uuid.uuid4().hex[:6]
+    run(create_order(oid, "quantum_month", 300))
+    run(save_platega_tx(oid, f"tx-{oid}"))
+
+    r = client.post("/webhook/platega", json={"id": f"tx-{oid}", "payload": oid})
+    assert r.status_code == 200, r.text
+    order = run(get_order(oid))
+    assert order["status"] == "cancelled", order
+    assert order["status"] != "error"
+    assert order["error_msg"] == "Payment cancelled"
+
+
+def test_create_payment_failure_cleans_orphan_order(client, mocks):
+    """№39: сбой create_payment → 502, заказ-сирота не остаётся в БД."""
+    provider, _ = mocks
+    provider.fail_create = True
+    r = client.post("/api/order/create", json={"tariff": "quantum_month", "addon_type": ""})
+    assert r.status_code == 502, r.text
+    assert run(_count_orders()) == 0
 
 
 def test_managed_email_guard():

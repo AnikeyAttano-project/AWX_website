@@ -7,7 +7,7 @@ import shared_state
 from config import settings
 from database import (
     get_addon_by_tx, get_addon_by_id, get_renewal_by_tx, get_renewal_by_id,
-    get_order, get_order_by_tx, set_renewal_status, mark_order_error,
+    get_order, get_order_by_tx, set_renewal_status, mark_order_cancelled,
     finalize_pending_addon,
 )
 from payment_providers import PaymentError
@@ -89,7 +89,9 @@ async def _handle_payment_webhook(request: Request, provider: "PaymentProvider")
                     await set_renewal_status(renewal["id"], "cancelled")
                     logger.info("Renewal payment cancelled/expired: id=%s", renewal["id"])
                 else:
-                    await mark_order_error(order_id, f"Payment {real_status}")
+                    # Пользователь отменил платёж / он истёк — это НЕ технический
+                    # сбой выдачи: терминальный 'cancelled', отдельный от 'error' (№36).
+                    await mark_order_cancelled(order_id, f"Payment {real_status}")
         return {"ok": True, "msg": "not confirmed yet"}
 
     # 2. Статус succeeded — ищем add-on, затем renewal (Часть 2), затем обычный заказ.

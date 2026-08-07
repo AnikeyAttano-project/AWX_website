@@ -135,9 +135,8 @@ async def require_verified_email(user: dict = Depends(get_current_user)):
 @auth_router.post("/register")
 async def register(req: RegisterRequest, request: Request):
     """Register a new user. Returns JWT token."""
-    ip = get_real_ip(request)
-    if not check_rate_limit(ip, settings.auth_rate_limit_per_hour, 60):
-        raise HTTPException(429, "Too many registration attempts, try later")
+    # Валидация ДО rate-limit (№38): мусорные запросы (кривой email/пароль)
+    # не должны сжигать лимит и блокировать легитимные регистрации.
     if len(req.password) < settings.password_min_length:
         raise HTTPException(
             400, f"Password must be at least {settings.password_min_length} characters")
@@ -146,6 +145,10 @@ async def register(req: RegisterRequest, request: Request):
             400, f"Password must be at most {settings.password_max_length} characters")
     if len(req.email) < 3 or "@" not in req.email:
         raise HTTPException(400, "Invalid email address")
+
+    ip = get_real_ip(request)
+    if not check_rate_limit(f"auth:{ip}", settings.auth_rate_limit_per_hour, 60):
+        raise HTTPException(429, "Too many registration attempts, try later")
 
     existing = await get_user_by_email(req.email)
     if existing:
@@ -176,7 +179,7 @@ async def register(req: RegisterRequest, request: Request):
 async def login(req: LoginRequest, request: Request):
     """Login with email and password. Returns JWT token."""
     ip = get_real_ip(request)
-    if not check_rate_limit(ip, settings.auth_rate_limit_per_hour, 60):
+    if not check_rate_limit(f"auth:{ip}", settings.auth_rate_limit_per_hour, 60):
         raise HTTPException(429, "Too many login attempts, try later")
 
     email = req.email.lower().strip()

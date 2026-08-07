@@ -141,8 +141,10 @@ class PaymentLifecycle:
 
         real_status = known_status
         if real_status is None:
-            provider = get_provider(entity.get(self.provider_field) or "")
             try:
+                # get_provider внутри try (№35): неизвестное сохранённое имя
+                # провайдера — тоже PaymentError, а не молчаливый фолбэк.
+                provider = get_provider(entity.get(self.provider_field) or "")
                 real_status = await provider.check_status(tx_id)
             except PaymentError as e:
                 logger.error("%s: check_status failed for %s: %s",

@@ -120,7 +120,10 @@ async def renew_subscription(order_id: str, request: Request, user: dict = Depen
     days, amount = tariff["days"], tariff["price"]  # полная цена, НЕ proration
 
     renewal_id = uuid.uuid4().hex[:12]
-    provider = shared_state.get_active_provider()
+    try:
+        provider = shared_state.get_active_provider()
+    except PaymentError as e:  # №35: провайдера не угадываем — конфиг кривой
+        raise HTTPException(502, str(e))
     try:
         payment = await provider.create_payment(
             amount=amount, order_id=renewal_id,
@@ -338,7 +341,7 @@ async def activate_trial(request: Request, user: dict = Depends(require_verified
         raise HTTPException(403, "Пробный период отключён")
     # IP rate limiting: 1 триал на IP в 24 часа
     client_ip = get_real_ip(request)
-    if not shared_state.check_rate_limit(client_ip, max_requests=1, window_minutes=1440):
+    if not shared_state.check_rate_limit(f"trial:{client_ip}", max_requests=1, window_minutes=1440):
         logger.warning("Trial rate limit exceeded for IP: %s", client_ip)
         raise HTTPException(429, "Пробный период уже был активирован. Попробуйте позже.")
 
@@ -490,7 +493,10 @@ async def purchase_addon(order_id: str, req: AddonRequest, request: Request,
                            details=f"order={order_id} addon={addon_id} type={req.addon_type} price=0")
         return {"ok": True, "addon_id": addon_id, "price_now": 0}
 
-    provider = shared_state.get_active_provider()
+    try:
+        provider = shared_state.get_active_provider()
+    except PaymentError as e:  # №35: провайдера не угадываем — конфиг кривой
+        raise HTTPException(502, str(e))
     try:
         payment = await provider.create_payment(amount=price_now, order_id=addon_id,
                                                 description=f"Доп. устройства {addon_cfg['title']} ({round(remaining)} дн.)",
