@@ -7,22 +7,8 @@
 <meta name="description" content="AWX VPN — приватный VPN без логов и ограничений скорости. Выберите тариф и получите доступ с 5 устройств за минуту.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
 <style>
-  :root{
-    --bg:#F3F2EE;
-    --surface:#FFFFFF;
-    --border:#E7E5E0;
-    --text:#191815;
-    --text-2:#5A564F;
-    --text-3:#6E685E;   /* затемнено для контраста >= 4.5:1 (было #9A968D) */
-    --accent:#1F5F52;
-    --accent-bg:#EAF1EE;
-    --ok:#157347;       /* успех: контраст ~5.9:1 на белом */
-    --err:#C62828;      /* ошибка: контраст ~5.6:1 на белом */
-    --focus-ring:0 0 0 3px rgba(31,95,82,.22);
-    --glass-bg:rgba(255,255,255,.45);
-    --glass-border:rgba(255,255,255,.7);
-  }
   *{box-sizing:border-box;margin:0;padding:0;}
   /* Доступность: видимый фокус для клавиатуры + skip-link */
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px;}
@@ -66,6 +52,28 @@
   .nav-links a{color:var(--text-2);text-decoration:none;font-size:14px;font-weight:500;transition:color .15s;}
   .nav-links a:hover{color:var(--text);}
   .nav-actions{display:flex;align-items:center;gap:10px;}
+  /* Мобильная навигация: гамбургер + выпадающее меню (№28) */
+  .nav-burger{
+    display:none;width:44px;height:44px;align-items:center;justify-content:center;
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);cursor:pointer;transition:border-color .15s,color .15s;
+  }
+  .nav-burger:hover{border-color:var(--text-3);}
+  .mobile-menu{
+    position:absolute;top:100%;left:0;right:0;z-index:9;
+    background:var(--surface);border-bottom:1px solid var(--border);
+    box-shadow:0 16px 40px rgba(35,32,25,.10);
+  }
+  .mobile-menu-inner{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:4px;padding:12px 24px 16px;}
+  .mobile-menu-inner > a{
+    padding:12px 14px;border-radius:8px;color:var(--text);text-decoration:none;
+    font-size:15px;font-weight:600;min-height:44px;display:flex;align-items:center;
+  }
+  .mobile-menu-inner > a:hover{background:var(--bg);}
+  .mobile-menu-divider{height:1px;background:var(--border);margin:8px 0;}
+  .mobile-auth{display:flex;flex-direction:column;gap:8px;}
+  .mobile-auth .btn{width:100%;}
+  .mobile-auth .btn-ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .btn{
     display:inline-flex;align-items:center;justify-content:center;
     padding:9px 18px;min-height:44px;border-radius:6px;font-size:14px;font-weight:600;
@@ -153,6 +161,14 @@
     background:#dc2626;color:#fff;font-size:11px;font-weight:700;
     padding:3px 10px;border-radius:20px;
   }
+  /* Бейдж скидки (№44): не накладывается на кастомный бейдж тарифа —
+     если оба присутствуют, скидка сдвигается ниже. */
+  .tariff-discount{
+    position:absolute;top:12px;right:12px;z-index:2;
+    background:#dc2626;color:#fff;font-size:11px;font-weight:700;
+    padding:3px 8px;border-radius:12px;
+  }
+  .tariff-discount.stacked{top:42px;}
   .tariff-price{font-size:36px;font-weight:700;color:var(--accent);margin-bottom:4px;}
   .tariff-period{font-size:13px;color:var(--text-3);margin-bottom:24px;}
   .tariff-features{text-align:left;margin-bottom:28px;}
@@ -210,6 +226,11 @@
   @media(max-width:820px){
     h1{font-size:32px;white-space:normal;}
     .nav-links{display:none;}
+    /* Мобильная навигация: скрываем десктопные действия, показываем гамбургер.
+       Это же гарантирует, что хедер помещается на 320px (№29): остаются
+       только логотип + кнопка меню. */
+    .nav-actions{display:none;}
+    .nav-burger{display:inline-flex;}
     .feat-grid,.tariff-grid{grid-template-columns:1fr;}
     .hero{padding:80px 0 60px;}
   }
@@ -247,7 +268,29 @@
         <a href="/account.html" class="btn btn-ghost" id="nav-login-link">Войти</a>
         <a href="#tariffs" class="btn btn-dark">Попробовать</a>
       </div>
+      <button id="nav-burger" class="nav-burger" aria-label="Открыть меню" aria-expanded="false"
+              aria-controls="mobile-menu" onclick="toggleMobileMenu()">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
     </nav>
+  </div>
+
+  <!-- Мобильное меню: дублирует десктоп-навигацию + вход/ЛК (№28) -->
+  <div id="mobile-menu" class="mobile-menu" hidden>
+    <div class="mobile-menu-inner">
+      <a href="#features" onclick="closeMobileMenu()">Возможности</a>
+      <a href="#tariffs" onclick="closeMobileMenu()">Тарифы</a>
+      <a href="#faq" onclick="closeMobileMenu()">FAQ</a>
+      <div class="mobile-menu-divider"></div>
+      <div id="mm-auth" class="mobile-auth">
+        <a href="/account.html" class="btn btn-dark">Войти</a>
+        <a href="#tariffs" class="btn btn-outline" onclick="closeMobileMenu()">Попробовать</a>
+      </div>
+      <div id="mm-user" class="mobile-auth hidden">
+        <a href="/account.html" class="btn btn-dark btn-ellipsis" id="mm-email"></a>
+        <button class="btn btn-outline" onclick="handleNavLogout()">Выйти</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -331,7 +374,7 @@
           <li style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2);padding:5px 0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Мгновенная выдача ключа</li>
         </ul>
         <button onclick="showDemoPasswordModal()" class="btn btn-outline" style="width:100%;padding:12px;border-radius:8px;font-size:14px;">
-          🚀 Получить демо-ключ
+          Получить демо-ключ
         </button>
       </div>
     </div>
@@ -413,6 +456,16 @@ const API_BASE = 'http://localhost:8000';
 // Кэш тарифов с ценами add-on'ов (из GET /api/tariffs) — для модалки подтверждения
 let TARIFFS_CACHE = [];
 
+const planName = (slug, title) => {
+  const names = {
+    quantum_month: 'Quantum Месяц',
+    quantum_quarter: 'Quantum 3 Месяца',
+    quantum_halfyear: 'Quantum 6 Месяцев',
+    quantum_year: 'Quantum 12 Месяцев'
+  };
+  return names[slug] || title;
+};
+
 async function loadTariffs() {
   try {
     const resp = await fetch(`${API_BASE}/api/tariffs`);
@@ -422,16 +475,6 @@ async function loadTariffs() {
     const tariffs = Array.isArray(data) ? data : (data.tariffs || []);
     TARIFFS_CACHE = tariffs;
     const monthPrice = tariffs.find(t => t.slug === 'quantum_month')?.price;
-
-    const planName = (slug, title) => {
-      const names = {
-        quantum_month: 'Quantum Месяц',
-        quantum_quarter: 'Quantum 3 Месяца',
-        quantum_halfyear: 'Quantum 6 Месяцев',
-        quantum_year: 'Quantum 12 Месяцев'
-      };
-      return names[slug] || title;
-    };
 
     const tariffCard = (t, idx) => {
       const fullPrice = monthPrice ? Math.round(monthPrice * t.days / 30) : null;
@@ -450,7 +493,7 @@ async function loadTariffs() {
       <div class="tariff ${isPopular ? 'popular' : ''}">
         ${isPopular ? '<div class="tariff-badge">ПОПУЛЯРНЫЙ</div>' : ''}
         ${customBadge}
-        ${discount >= 5 ? `<div style="position:absolute;top:12px;right:12px;background:#dc2626;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:12px;">-${discount}%</div>` : ''}
+        ${discount >= 5 ? `<div class="tariff-discount${customBadge ? ' stacked' : ''}">-${discount}%</div>` : ''}
         <div class="tariff-name">${planName(t.slug, t.title)}</div>
         ${desc}
         <div class="tariff-price">${t.price} ₽</div>
@@ -762,7 +805,9 @@ document.addEventListener('keydown', e => {
 function showDemoPasswordModal() {
   document.getElementById('modal-content').innerHTML = `
     <div style="text-align:center;">
-      <div style="font-size:36px;margin-bottom:12px;" aria-hidden="true">🔑</div>
+      <div style="margin-bottom:12px;color:var(--accent);" aria-hidden="true">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      </div>
       <h3 style="font-size:18px;font-weight:700;margin-bottom:6px;">Демо-доступ</h3>
       <p style="font-size:13px;color:var(--text-3);margin-bottom:20px;">Введите тестовый пароль для получения ключа</p>
       <label for="demo-password-input" style="display:block;text-align:left;font-weight:600;font-size:14px;margin-bottom:6px;">Пароль демо-доступа</label>
@@ -770,7 +815,7 @@ function showDemoPasswordModal() {
         style="width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg);margin-bottom:10px;"
         onkeydown="if(event.key==='Enter')demoOrder()">
       <div id="demo-password-error" role="alert" style="color:var(--err);font-size:13px;margin-bottom:10px;display:none;"></div>
-      <button id="demo-modal-submit" onclick="demoOrder()" class="btn btn-outline" style="width:100%;padding:12px;border-radius:8px;font-size:14px;">🚀 Получить демо-ключ</button>
+      <button id="demo-modal-submit" onclick="demoOrder()" class="btn btn-outline" style="width:100%;padding:12px;border-radius:8px;font-size:14px;">Получить демо-ключ</button>
     </div>
   `;
   openModal('Демо-доступ');
@@ -828,7 +873,7 @@ async function demoOrder() {
   } catch (e) {
     demoPasswordError(e.message || 'Ошибка сети');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🚀 Получить демо-ключ'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Получить демо-ключ'; }
   }
 }
 
@@ -923,6 +968,13 @@ async function initNavUser() {
       emailEl.title = data.email;
       loginLink.classList.add('hidden');
       userBox.classList.remove('hidden');
+      // Мобильное меню: показываем email + «Выйти» вместо «Войти» (№28)
+      const mmAuth = document.getElementById('mm-auth');
+      const mmUser = document.getElementById('mm-user');
+      const mmEmail = document.getElementById('mm-email');
+      if (mmEmail) mmEmail.textContent = data.email;
+      if (mmAuth) mmAuth.classList.add('hidden');
+      if (mmUser) mmUser.classList.remove('hidden');
     }
   } catch (e) {
     // Сервер недоступен — оставляем «Войти»
@@ -934,9 +986,56 @@ function handleNavLogout() {
   window.location.reload();
 }
 
+// ————————————————— МОБИЛЬНОЕ МЕНЮ (№28) —————————————————
+function toggleMobileMenu() {
+  const menu = document.getElementById('mobile-menu');
+  const burger = document.getElementById('nav-burger');
+  const open = menu.hasAttribute('hidden');
+  menu.toggleAttribute('hidden');
+  burger.setAttribute('aria-expanded', String(open));
+  burger.setAttribute('aria-label', open ? 'Закрыть меню' : 'Открыть меню');
+}
+function closeMobileMenu() {
+  const menu = document.getElementById('mobile-menu');
+  if (!menu || menu.hasAttribute('hidden')) return;
+  menu.toggleAttribute('hidden');
+  const burger = document.getElementById('nav-burger');
+  if (burger) {
+    burger.setAttribute('aria-expanded', 'false');
+    burger.setAttribute('aria-label', 'Открыть меню');
+  }
+}
+// Escape и клик вне меню закрывают его
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMobileMenu(); });
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('mobile-menu');
+  if (!menu || menu.hasAttribute('hidden')) return;
+  const burger = document.getElementById('nav-burger');
+  if (!menu.contains(e.target) && !(burger && burger.contains(e.target))) closeMobileMenu();
+});
+
 initNavUser();
 
-loadTariffs();
+// №30: конверсия — вернулись из ЛК после входа с выбранным тарифом (?buy=slug).
+// Открываем чекаут этого тарифа (awx_pending_tariff уже потреблён в account.html).
+function openPendingCheckout() {
+  const params = new URLSearchParams(window.location.search);
+  const slug = params.get('buy');
+  if (!slug) return;
+  // Убираем ?buy из адресной строки, чтобы повторная перезагрузка не открывала чекаут заново
+  history.replaceState(null, '', window.location.pathname);
+  const t = TARIFFS_CACHE.find(x => x.slug === slug);
+  if (!t) return;
+  let pending = null;
+  try { pending = JSON.parse(localStorage.getItem('awx_pending_tariff') || 'null'); } catch (e) {}
+  localStorage.removeItem('awx_pending_tariff');
+  const name = (pending && pending.name) || planName(slug, t.title);
+  const price = (pending && pending.price != null) ? pending.price : t.price;
+  const days = (pending && pending.days != null) ? pending.days : t.days;
+  buyTariff(slug, name, price, days);
+}
+
+loadTariffs().then(openPendingCheckout);
 
 initDemoMode();
 

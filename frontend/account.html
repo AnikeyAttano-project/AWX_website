@@ -6,19 +6,8 @@
 <title>Личный кабинет — AWX VPN</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
 <style>
-  :root{
-    --bg:#F3F2EE;
-    --surface:#FFFFFF;
-    --border:#E7E5E0;
-    --text:#191815;
-    --text-2:#5A564F;
-    --text-3:#6E6A61;   /* WCAG AA ≥4.5:1 на светлом фоне (было #9A968D ≈2.6:1) */
-    --accent:#1F5F52;
-    --accent-bg:#EAF1EE;
-    --glass-bg:rgba(255,255,255,.45);
-    --glass-border:rgba(255,255,255,.7);
-  }
   *{box-sizing:border-box;margin:0;padding:0;}
   body{
     background:var(--bg);color:var(--text);
@@ -598,6 +587,12 @@ function clearToken() {
   if (params.get('redirect') === 'buy') {
     const banner = document.getElementById('auth-banner');
     if (banner) banner.classList.remove('hidden');
+    // №30: пользователь уже авторизован — не заставляем входить повторно,
+    // сразу возвращаем его в чекаут выбранного тарифа.
+    if (getToken() && localStorage.getItem('awx_pending_tariff')) {
+      consumePendingTariff();
+      return;
+    }
   }
   // Подставляем реферальный код из URL (?ref=XXXX)
   const refCode = params.get('ref');
@@ -610,6 +605,17 @@ function clearToken() {
     }
   }
 })();
+
+// №30: конверсия — витрина сохранила awx_pending_tariff и перевела сюда на
+// авторизацию. После входа/регистрации возвращаем пользователя в чекаут.
+function consumePendingTariff() {
+  let pending = null;
+  try { pending = JSON.parse(localStorage.getItem('awx_pending_tariff') || 'null'); } catch (e) {}
+  if (!pending || !pending.slug) return false;
+  localStorage.removeItem('awx_pending_tariff');
+  window.location.replace('/?buy=' + encodeURIComponent(pending.slug));
+  return true;
+}
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -744,6 +750,7 @@ async function handleLogin(e) {
       body: JSON.stringify({ email, password })
     });
     setToken(data.token);
+    if (consumePendingTariff()) return;
     await enterDashboard();
   } catch (err) {
     showAuthError('login-error', err.message);
@@ -779,6 +786,7 @@ async function handleRegister(e) {
       body: JSON.stringify({ email, password, referral_code: referralCode })
     });
     setToken(data.token);
+    if (consumePendingTariff()) return;
 
     // Применяем реферальный код через отдельный эндпоинт (если введён и не был применён при регистрации)
     if (referralCode) {
