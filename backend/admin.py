@@ -343,6 +343,19 @@ async def get_dashboard():
         )
         recent = [dict(r) for r in await cur.fetchall()]
 
+        # Orders by day (last 7 days) — компактный график на Сводке
+        week_ago = (now - timedelta(days=6)).strftime("%Y-%m-%d 00:00:00")
+        cur = await db.execute(
+            """SELECT date(created_at) AS day,
+                      COUNT(*) AS orders,
+                      COALESCE(SUM(CASE WHEN status='paid' THEN amount ELSE 0 END), 0) AS revenue
+               FROM orders
+               WHERE created_at >= ? AND status != 'deleted'
+               GROUP BY day ORDER BY day""",
+            (week_ago,),
+        )
+        orders_week = [dict(r) for r in await cur.fetchall()]
+
     return {
         "users": {"total": users_total, "blocked": users_blocked, "today": users_today, "week": users_week, "trial": trial_users},
         "orders": {"total": orders_total, "paid": orders_paid, "pending": orders_pending, "error": orders_error},
@@ -350,6 +363,7 @@ async def get_dashboard():
         "keys": {"active": keys_active, "expired": keys_expired},
         "trial_enabled": settings.trial_enabled,
         "recent_orders": recent,
+        "orders_week": orders_week,
     }
 
 

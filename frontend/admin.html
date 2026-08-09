@@ -153,6 +153,11 @@
   .bar-label{position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--text-3);white-space:nowrap;}
   .bar-tip{display:none;position:absolute;top:-30px;left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:4px 9px;border-radius:6px;font-size:11px;white-space:nowrap;z-index:5;box-shadow:var(--shadow-md);}
   .bar:hover .bar-tip{display:block;}
+  /* Ит.5: оси и подписи графиков */
+  .bar-plot{display:flex;align-items:stretch;gap:8px;margin-bottom:22px;}
+  .bar-yaxis{display:flex;flex-direction:column;justify-content:space-between;width:46px;flex-shrink:0;font-size:10.5px;color:var(--text-3);text-align:right;line-height:1.2;}
+  .bar-chart{flex:1;}
+  .chart-empty{padding:26px 8px;text-align:center;color:var(--text-3);font-size:13px;}
   .hbar-row{display:flex;align-items:center;gap:12px;margin-bottom:11px;}
   .hbar-label{width:130px;font-size:13px;font-weight:600;text-align:right;flex-shrink:0;color:var(--text-2);}
   .hbar-track{flex:1;height:26px;background:var(--surface-2);border-radius:7px;overflow:hidden;}
@@ -285,6 +290,7 @@
         </div>
       </div>
       <div id="dash-stats" class="stat-grid"></div>
+      <div id="dash-chart" style="margin-bottom:20px;"></div>
       <div class="section-head" style="margin-bottom:12px;"><h1 style="font-size:18px;">Последние заказы</h1></div>
       <div class="tbl-wrap">
         <table><thead><tr><th>ID</th><th>Тариф</th><th>Пользователь</th><th>Статус</th><th>Сумма</th><th>Дата</th></tr></thead>
@@ -694,10 +700,51 @@ const ICONS = {
   trial:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
 };
 
+// ====== ГРАФИКИ (Ит.5): единые карточки, пустые состояния, читаемые bar-чарты ======
+
+// Пустое состояние внутри карточки графика
+function emptyChart(text='Нет данных за период'){
+  return `<div class="chart-empty">${esc(text)}</div>`;
+}
+
+// Обёртка графика: заголовок + тело
+function chartCard(title, body, extra=''){
+  return `<div class="chart-card"><div class="chart-title">${esc(title)}${extra}</div>${body}</div>`;
+}
+
+// Читаемый bar-чарт: ось Y (0…max) слева + подписи дат (разрежённые) под столбцами.
+// points = [{day, <valueKey>, ...}]; fmtTip(p) — текст подсказки, fmtVal(v) — значение по Y.
+function renderBars(points, { valueKey, color='var(--c1)', height=150, fmtTip, fmtVal } = {}){
+  if(!points || !points.length) return emptyChart();
+  const max = Math.max(...points.map(p => Number(p[valueKey]) || 0), 1);
+  const step = Math.max(1, Math.ceil(points.length / 10));
+  const shortDay = p => p.day ? String(p.day).slice(5) : '';
+  const bars = points.map((p, i) => {
+    const v = Number(p[valueKey]) || 0;
+    const h = Math.max((v / max) * height, v > 0 ? 2 : 1);
+    const tip = fmtTip ? fmtTip(p) : `${p.day}: ${v}`;
+    const label = (i % step === 0 || i === points.length - 1)
+      ? `<div class="bar-label">${esc(shortDay(p))}</div>` : '';
+    return `<div class="bar" style="height:${h}px;background:${color};">
+      ${label}
+      ${v > 0 ? `<div class="bar-tip">${esc(tip)}</div>` : ''}
+    </div>`;
+  }).join('');
+  const maxLabel = fmtVal ? fmtVal(max) : String(max);
+  return `<div class="bar-plot">
+    <div class="bar-yaxis"><span>${esc(maxLabel)}</span><span>0</span></div>
+    <div class="bar-chart" style="height:${height}px;">${bars}</div>
+  </div>`;
+}
+
 async function loadDashboard(){
+  const statsEl = document.getElementById('dash-stats');
+  const recentEl = document.getElementById('dash-recent');
+  statsEl.innerHTML = Array.from({length:8}, () => `<div class="stat"><div class="skel" style="height:16px;width:40%;margin-bottom:10px;"></div><div class="skel" style="height:26px;width:60%;"></div></div>`).join('');
+  recentEl.innerHTML = skeletonRows(6, 4);
   try{
     const d = await api('/admin/dashboard');
-    document.getElementById('dash-stats').innerHTML = `
+    statsEl.innerHTML = `
       ${kpiCard(ICONS.users, 'Пользователей', d.users.total, `${d.users.today} сегодня · ${d.users.week} за неделю`, 'info')}
       ${kpiCard(ICONS.keys, 'Активных ключей', d.keys.active, `${d.keys.expired} истёкших`, 'accent')}
       ${kpiCard(ICONS.money, 'Доход сегодня', money(d.revenue.today), '', 'ok')}
@@ -707,6 +754,15 @@ async function loadDashboard(){
       ${kpiCard(ICONS.orders, 'Заказы', d.orders.total, `${d.orders.paid} оплачено · ${d.orders.pending} ожидание · ${d.orders.error} ошибки`, 'accent')}
       ${kpiCard(ICONS.trial, 'Триал', d.users.trial, d.trial_enabled?'Включён':'Отключён', 'flat')}
     `;
+    // Мини-график «Заказы за 7 дней» на Сводке
+    const wk = d.orders_week || [];
+    document.getElementById('dash-chart').innerHTML = chartCard(
+      'Заказы за 7 дней',
+      renderBars(wk, { valueKey:'orders', color:'var(--c1)', height:110,
+        fmtTip: p => `${p.day}: ${p.orders} заказов · ${money(p.revenue)}`,
+        fmtVal: v => String(v) }),
+      wk.length ? `<span style="font-size:12px;color:var(--text-3);font-weight:400;margin-left:8px;">всего ${wk.reduce((s,p)=>s+Number(p.orders||0),0)} заказов</span>` : ''
+    );
     const rows = d.recent_orders.map(o => `<tr>
       <td><code style="font-size:12px;">${esc(o.id)}</code></td>
       <td>${esc(o.tariff)}</td>
@@ -715,7 +771,7 @@ async function loadDashboard(){
       <td>${money(o.amount)}</td>
       <td>${shortDate(o.created_at)}</td>
     </tr>`).join('');
-    document.getElementById('dash-recent').innerHTML = rows || emptyRow(6, 'Нет заказов');
+    recentEl.innerHTML = rows || emptyRow(6, 'Нет заказов');
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
@@ -1148,39 +1204,32 @@ async function loadStats(){
     const d = await api('/admin/stats');
     let html = '';
 
-    // KPI row
+    // KPI row (единый стиль с dashboard)
     html += `<div class="stat-grid">
-      <div class="stat"><div class="stat-label">Всего заказов</div><div class="stat-val">${d.basic.total_orders}</div></div>
-      <div class="stat"><div class="stat-label">Оплачено</div><div class="stat-val accent">${d.basic.paid}</div></div>
-      <div class="stat"><div class="stat-label">Конверсия</div><div class="stat-val accent">${d.conversion}%</div></div>
-      <div class="stat"><div class="stat-label">Общий доход</div><div class="stat-val">${money(d.basic.revenue)}</div></div>
+      ${kpiCard(ICONS.orders, 'Всего заказов', d.basic.total_orders, `${d.basic.pending} ожидание · ${d.basic.errors} ошибки`, 'flat')}
+      ${kpiCard(ICONS.keys, 'Оплачено', d.basic.paid, '', 'ok')}
+      ${kpiCard(ICONS.trial, 'Конверсия', d.conversion+'%', 'оплачено / создано', 'accent')}
+      ${kpiCard(ICONS.money, 'Общий доход', money(d.basic.revenue), '', 'warn')}
     </div>`;
 
-    // Orders by day bar chart
-    if(d.orders_by_day && d.orders_by_day.length){
-      const max = Math.max(...d.orders_by_day.map(x=>x.orders), 1);
-      const bars = d.orders_by_day.map(x => {
-        const h = Math.max((x.orders/max)*120, 2);
-        return `<div class="bar" style="height:${h}px;background:var(--c1);"><div class="bar-tip">${esc(x.day)}: ${x.orders} заказов, ${money(x.revenue)}</div></div>`;
-      }).join('');
-      html += `<div class="chart-card"><div class="chart-title">Заказы по дням (30 дней)</div><div class="bar-chart" style="margin-bottom:24px;">${bars}</div></div>`;
-    }
+    // Orders by day bar chart (ось Y + подписи дат)
+    html += chartCard('Заказы по дням (30 дней)',
+      renderBars(d.orders_by_day || [], { valueKey:'orders', color:'var(--c1)', height:140,
+        fmtTip: p => `${p.day}: ${p.orders} заказов · ${money(p.revenue)}`,
+        fmtVal: v => String(v) }));
 
     // Revenue by day
-    if(d.revenue_by_day && d.revenue_by_day.length){
-      const max = Math.max(...d.revenue_by_day.map(x=>x.revenue||0), 1);
-      const bars = d.revenue_by_day.map(x => {
-        const h = Math.max(((x.revenue||0)/max)*120, 2);
-        return `<div class="bar" style="height:${h}px;background:var(--c2);"><div class="bar-tip">${esc(x.day)}: ${money(x.revenue)}</div></div>`;
-      }).join('');
-      html += `<div class="chart-card"><div class="chart-title">Доход по дням (30 дней)</div><div class="bar-chart" style="margin-bottom:24px;">${bars}</div></div>`;
-    }
+    html += chartCard('Доход по дням (30 дней)',
+      renderBars(d.revenue_by_day || [], { valueKey:'revenue', color:'var(--c2)', height:140,
+        fmtTip: p => `${p.day}: ${money(p.revenue)}`,
+        fmtVal: v => money(v) }));
 
     // Top tariffs
-    if(d.top_tariffs && d.top_tariffs.length){
-      const max = Math.max(...d.top_tariffs.map(x=>x.orders), 1);
+    const tt = d.top_tariffs || [];
+    if(tt.length){
+      const max = Math.max(...tt.map(x=>x.orders), 1);
       const colors = ['var(--c1)','var(--c2)','var(--c3)','var(--c4)','var(--accent)'];
-      const hbars = d.top_tariffs.map((x,i) => {
+      const hbars = tt.map((x,i) => {
         const w = Math.max((x.orders/max)*100, 5);
         return `<div class="hbar-row">
           <div class="hbar-label">${esc(x.tariff)}</div>
@@ -1188,7 +1237,9 @@ async function loadStats(){
           <div class="hbar-val">${money(x.revenue)}</div>
         </div>`;
       }).join('');
-      html += `<div class="chart-card"><div class="chart-title">Топ тарифов</div>${hbars}</div>`;
+      html += chartCard('Топ тарифов', hbars);
+    } else {
+      html += chartCard('Топ тарифов', emptyChart('Нет оплаченных заказов'));
     }
 
     // Key distribution
@@ -1206,20 +1257,18 @@ async function loadStats(){
         return w > 0 ? `<div style="display:inline-block;height:18px;width:${w}%;background:${it.color};border-radius:4px;position:relative;" title="${it.label}: ${it.val}"><span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:10px;font-weight:600;color:#fff;white-space:nowrap;">${w>12?it.val:''}</span></div>` : '';
       }).join('');
       const legend = items.map(it => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:12px;"><span style="width:10px;height:10px;border-radius:3px;background:${it.color};"></span>${it.label}: ${it.val}</span>`).join('');
-      html += `<div class="chart-card"><div class="chart-title">Распределение ключей</div><div style="display:flex;border-radius:8px;overflow:hidden;margin-bottom:10px;">${b}</div><div>${legend}</div></div>`;
+      html += chartCard('Распределение ключей', `<div style="display:flex;border-radius:8px;overflow:hidden;margin-bottom:10px;">${b}</div><div>${legend}</div>`);
+    } else {
+      html += chartCard('Распределение ключей', emptyChart('Ключей пока нет'));
     }
 
     // Users by day
-    if(d.users_by_day && d.users_by_day.length){
-      const max = Math.max(...d.users_by_day.map(x=>x.users), 1);
-      const bars = d.users_by_day.map(x => {
-        const h = Math.max((x.users/max)*100, 2);
-        return `<div class="bar" style="height:${h}px;background:var(--c3);"><div class="bar-tip">${esc(x.day)}: ${x.users} новых</div></div>`;
-      }).join('');
-      html += `<div class="chart-card"><div class="chart-title">Новые пользователи (14 дней)</div><div class="bar-chart" style="margin-bottom:24px;">${bars}</div></div>`;
-    }
+    html += chartCard('Новые пользователи (14 дней)',
+      renderBars(d.users_by_day || [], { valueKey:'users', color:'var(--c3)', height:120,
+        fmtTip: p => `${p.day}: ${p.users} новых`,
+        fmtVal: v => String(v) }));
 
-    el.innerHTML = html || '<p style="color:var(--text-3);text-align:center;padding:48px;">Нет данных</p>';
+    el.innerHTML = html;
   }catch(e){ el.innerHTML = `<p style="color:var(--err);text-align:center;padding:48px;">Ошибка: ${esc(e.message)}</p>`; }
 }
 
@@ -1245,41 +1294,49 @@ async function loadAnalytics(){
     </div>`;
 
     // Воронка по дням: 3 бара на день (создано / оплачено / ключ)
-    if(funnel.rows && funnel.rows.length){
-      const allMax = Math.max(...funnel.rows.map(r => Math.max(r.order_create, r.order_paid, r.fulfill)), 1);
-      const days = funnel.rows.map(r => {
-        const h = v => Math.max((v/allMax)*110, 2);
+    const funnelRows = funnel.rows || [];
+    if(funnelRows.length){
+      const allMax = Math.max(...funnelRows.map(r => Math.max(r.order_create, r.order_paid, r.fulfill)), 1);
+      const step = Math.max(1, Math.ceil(funnelRows.length / 8));
+      const days = funnelRows.map((r, i) => {
+        const h = v => Math.max((v/allMax)*110, v>0 ? 2 : 1);
+        const showLabel = (i % step === 0 || i === funnelRows.length - 1);
         return `<div style="flex:1;min-width:0;text-align:center;">
           <div class="bar-chart" style="height:120px;justify-content:center;gap:2px;">
-            <div class="bar" style="height:${h(r.order_create)}px;background:var(--c1);"><div class="bar-tip">Создано: ${r.order_create}</div></div>
-            <div class="bar" style="height:${h(r.order_paid)}px;background:var(--accent);"><div class="bar-tip">Оплачено: ${r.order_paid}</div></div>
-            <div class="bar" style="height:${h(r.fulfill)}px;background:var(--c3);"><div class="bar-tip">Ключей: ${r.fulfill}</div></div>
+            <div class="bar" style="height:${h(r.order_create)}px;background:var(--c1);"><div class="bar-tip">${esc(String(r.date))}: создано ${r.order_create}</div></div>
+            <div class="bar" style="height:${h(r.order_paid)}px;background:var(--accent);"><div class="bar-tip">${esc(String(r.date))}: оплачено ${r.order_paid}</div></div>
+            <div class="bar" style="height:${h(r.fulfill)}px;background:var(--c3);"><div class="bar-tip">${esc(String(r.date))}: ключей ${r.fulfill}</div></div>
           </div>
-          <div style="font-size:10px;color:var(--text-3);margin-top:4px;overflow:hidden;text-overflow:ellipsis;">${esc(String(r.date).slice(5))}</div>
+          ${showLabel ? `<div style="font-size:10px;color:var(--text-3);margin-top:6px;overflow:hidden;text-overflow:ellipsis;">${esc(String(r.date).slice(5))}</div>` : `<div style="height:20px;"></div>`}
         </div>`;
       }).join('');
       html += `<div class="chart-card"><div class="chart-title">Воронка по дням (создано → оплачено → ключ)</div>
-        <div style="display:flex;gap:6px;align-items:flex-end;">${days}</div>
-        <div style="display:flex;gap:16px;margin-top:16px;font-size:12px;color:var(--text-2);">
+        <div class="bar-plot">
+          <div class="bar-yaxis"><span>${allMax}</span><span>0</span></div>
+          <div style="display:flex;gap:6px;align-items:flex-end;flex:1;">${days}</div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:6px;font-size:12px;color:var(--text-2);">
           <span><i style="display:inline-block;width:10px;height:10px;background:var(--c1);border-radius:2px;"></i> Создано</span>
           <span><i style="display:inline-block;width:10px;height:10px;background:var(--accent);border-radius:2px;"></i> Оплачено</span>
           <span><i style="display:inline-block;width:10px;height:10px;background:var(--c3);border-radius:2px;"></i> Ключей</span>
         </div></div>`;
     } else {
-      html += `<div class="card"><p style="color:var(--text-2);font-size:13px;">Нет событий за 7 дней.</p></div>`;
+      html += chartCard('Воронка по дням (создано → оплачено → ключ)', emptyChart('Нет событий за 7 дней'));
     }
 
     // Выручка по тарифам (hbar)
     if(byTariff && byTariff.length){
       const maxRev = Math.max(...byTariff.map(x=>x.revenue||0), 1);
-      html += `<div class="chart-card"><div class="chart-title">Выручка по тарифам (30 дней)</div>`;
-      html += byTariff.map(tf => {
+      let hb = '';
+      hb += byTariff.map(tf => {
         const pct = Math.max(((tf.revenue||0)/maxRev)*100, 3);
         return `<div class="hbar-row"><div class="hbar-label">${esc(tf.tariff)}</div>
           <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:var(--accent);">${money(tf.revenue||0)}</div></div>
           <div class="hbar-val">${tf.cnt} шт.</div></div>`;
       }).join('');
-      html += `</div>`;
+      html += chartCard('Выручка по тарифам (30 дней)', hb);
+    } else {
+      html += chartCard('Выручка по тарифам (30 дней)', emptyChart('Нет оплаченных заказов за 30 дней'));
     }
 
     // Аномалии
