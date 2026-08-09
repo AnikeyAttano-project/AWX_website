@@ -45,6 +45,7 @@ from database import (
     create_promo_code, list_promo_codes, delete_promo_code, toggle_promo_code,
     get_analytics_funnel, get_analytics_by_tariff, get_analytics_anomalies,
     create_order, set_order_user, mark_paid, save_subscription, delete_order,
+    set_test_account,
 )
 from xui_client import _parse_inbound_ids, effective_inbounds, XuiError
 import shared_state
@@ -114,6 +115,10 @@ class ManualKeyIssueRequest(BaseModel):
 
 class ManualKeyReissueRequest(BaseModel):
     order_id: str = Field(min_length=1, description="ID подписки пользователя")
+
+
+class TestAccountRequest(BaseModel):
+    is_test: bool = Field(description="Пометить аккаунт как тестовый (True) / снять пометку (False)")
 
 
 class BulkIdsRequest(BaseModel):
@@ -439,6 +444,30 @@ async def unblock_user(user_id: str):
         raise HTTPException(404, "User not found")
     await set_user_blocked(user_id, False)
     return {"ok": True, "blocked": False}
+
+
+@admin_router.post("/users/{user_id}/test-account")
+async def set_user_test_account(
+    user_id: str,
+    req: TestAccountRequest,
+    x_admin_name: str = Header(default="", alias="X-Admin-Name"),
+):
+    """Пометить/снять пометку «тестовый аккаунт» (Ит.7).
+
+    Тестовые аккаунты пропускают confirm_email в дебаг-песочнице
+    (require_test_account_or_confirmation) — поэтому действие аудитится
+    в site_log с именем админа (X-Admin-Name).
+    """
+    user = await get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    await set_test_account(user_id, req.is_test)
+    actor = _admin_name(x_admin_name)
+    await add_site_log(
+        "admin_test_account", actor=actor,
+        details=f"user={user_id} email={user.get('email')} is_test={1 if req.is_test else 0}",
+    )
+    return {"ok": True, "user_id": user_id, "is_test_account": req.is_test}
 
 
 # ————————————————— Массовые действия по юзерам (Ит.4) —————————————————

@@ -70,6 +70,11 @@
   .pill-pending{background:var(--warn-soft);color:var(--amber-600);}
   .pill-deleted{background:var(--surface-3);color:var(--stone-400);}
   .pill-blocked{background:var(--err-soft);color:var(--err);}
+  .pill-test{background:var(--accent-soft);color:var(--accent);}
+  /* Выбор юзера/заказа в дебаге (Ит.7): кликабельные строки в модалке */
+  .picker-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;font-family:var(--font-sans);text-align:left;transition:border-color var(--dur-2),background var(--dur-2);}
+  .picker-row:hover{border-color:var(--accent);background:var(--accent-soft);}
+  .picker-row + .picker-row{margin-top:6px;}
   /* Buttons */
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 17px;border-radius:var(--radius-sm);font-size:13.5px;font-weight:700;border:1px solid transparent;cursor:pointer;font-family:var(--font-sans);transition:all var(--dur-2) var(--ease);white-space:nowrap;letter-spacing:.01em;}
   .btn:focus-visible{outline:none;box-shadow:var(--focus-ring);}
@@ -131,6 +136,12 @@
   /* Часть 6: лейаут настроек (редакторы + липкое превью витрины) */
   .settings-layout{display:grid;grid-template-columns:1fr 330px;gap:20px;align-items:start;}
   @media (max-width:1100px){.settings-layout{grid-template-columns:1fr;}.preview-sticky{position:static!important;}}
+  /* Ит.6: табы в разделе настроек */
+  .settings-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px;}
+  .settings-tab{padding:9px 16px;border-radius:var(--radius-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:13.5px;font-weight:700;cursor:pointer;transition:all var(--dur-2);}
+  .settings-tab:hover{border-color:var(--accent);color:var(--accent);}
+  .settings-tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .settings-panel.hidden{display:none;}
   .preview-sticky{position:sticky;top:24px;}
   .preview-mini{border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface);box-shadow:var(--shadow-md);}
   .preview-mini .pv-head{display:flex;align-items:center;gap:10px;padding:15px 17px;border-bottom:1px solid var(--border);}
@@ -411,8 +422,18 @@
       <div class="card" style="margin-bottom:16px;">
         <h3 style="margin-bottom:12px;">1. Состояние пользователя / заказа</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <div class="field" style="min-width:180px;margin:0;"><label>User ID</label><input type="text" id="dbg-user-id" placeholder="user_id"></div>
-          <div class="field" style="min-width:180px;margin:0;"><label>Order ID</label><input type="text" id="dbg-order-id" placeholder="order_id"></div>
+          <div class="field" style="min-width:210px;margin:0;"><label>User ID</label>
+            <div style="display:flex;gap:6px;align-items:stretch;">
+              <input type="text" id="dbg-user-id" placeholder="user_id">
+              <button class="btn btn-outline btn-sm" title="Выбрать пользователя из списка" onclick="openPicker('user','dbg-user-id')" style="flex-shrink:0;">🔍</button>
+            </div>
+          </div>
+          <div class="field" style="min-width:210px;margin:0;"><label>Order ID</label>
+            <div style="display:flex;gap:6px;align-items:stretch;">
+              <input type="text" id="dbg-order-id" placeholder="order_id">
+              <button class="btn btn-outline btn-sm" title="Выбрать заказ из списка" onclick="openPicker('order','dbg-order-id')" style="flex-shrink:0;">🔍</button>
+            </div>
+          </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
           <button class="btn btn-dark btn-sm" onclick="debugInspect()">Проверить состояние</button>
@@ -427,7 +448,12 @@
       <div class="card" style="margin-bottom:16px;">
         <h3 style="margin-bottom:12px;">2. Симулятор оплаты / вебхуков</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <div class="field" style="min-width:160px;margin:0;"><label>User ID</label><input type="text" id="dbg-pay-user" placeholder="user_id"></div>
+          <div class="field" style="min-width:190px;margin:0;"><label>User ID</label>
+            <div style="display:flex;gap:6px;align-items:stretch;">
+              <input type="text" id="dbg-pay-user" placeholder="user_id">
+              <button class="btn btn-outline btn-sm" title="Выбрать пользователя из списка" onclick="openPicker('user','dbg-pay-user')" style="flex-shrink:0;">🔍</button>
+            </div>
+          </div>
           <div class="field" style="min-width:160px;margin:0;"><label>Тип покупки</label>
             <select id="dbg-pay-type">
               <option value="subscription">Подписка</option>
@@ -438,7 +464,12 @@
           <div class="field" style="min-width:170px;margin:0;"><label>Тариф (для подписки)</label>
             <select id="dbg-pay-tariff"><option value="">—</option></select>
           </div>
-          <div class="field" style="min-width:160px;margin:0;"><label>Order ID (add-on / fail)</label><input type="text" id="dbg-pay-order" placeholder="order_id"></div>
+          <div class="field" style="min-width:190px;margin:0;"><label>Order ID (add-on / fail)</label>
+            <div style="display:flex;gap:6px;align-items:stretch;">
+              <input type="text" id="dbg-pay-order" placeholder="order_id">
+              <button class="btn btn-outline btn-sm" title="Выбрать заказ из списка" onclick="openPicker('order','dbg-pay-order')" style="flex-shrink:0;">🔍</button>
+            </div>
+          </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
           <button class="btn btn-dark btn-sm" onclick="debugMock('success')">Mock success</button>
@@ -450,7 +481,12 @@
 
       <div class="card" style="margin-bottom:16px;">
         <h3 style="margin-bottom:12px;">3. Автопродление и Force Sync</h3>
-        <div class="field" style="max-width:240px;margin:0;"><label>Order ID</label><input type="text" id="dbg-renew-order" placeholder="order_id"></div>
+        <div class="field" style="max-width:270px;margin:0;"><label>Order ID</label>
+          <div style="display:flex;gap:6px;align-items:stretch;">
+            <input type="text" id="dbg-renew-order" placeholder="order_id">
+            <button class="btn btn-outline btn-sm" title="Выбрать заказ из списка" onclick="openPicker('order','dbg-renew-order')" style="flex-shrink:0;">🔍</button>
+          </div>
+        </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
           <button class="btn btn-dark btn-sm" onclick="debugSimulateRenew()">Simulate renew</button>
           <button class="btn btn-outline btn-sm" onclick="debugForceSyncPreview()">Force Sync (preview)</button>
@@ -462,8 +498,13 @@
 
       <div class="card" style="margin-bottom:16px;">
         <h3 style="margin-bottom:12px;">4. Таймлайн пользователя</h3>
-        <div style="display:flex;gap:8px;align-items:flex-end;">
-          <div class="field" style="max-width:240px;margin:0;"><label>User ID</label><input type="text" id="dbg-tl-user" placeholder="user_id"></div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+          <div class="field" style="max-width:270px;margin:0;"><label>User ID</label>
+            <div style="display:flex;gap:6px;align-items:stretch;">
+              <input type="text" id="dbg-tl-user" placeholder="user_id">
+              <button class="btn btn-outline btn-sm" title="Выбрать пользователя из списка" onclick="openPicker('user','dbg-tl-user')" style="flex-shrink:0;">🔍</button>
+            </div>
+          </div>
           <button class="btn btn-outline btn-sm" onclick="debugTimeline()">Показать</button>
         </div>
         <div id="dbg-timeline" style="margin-top:12px;"></div>
@@ -795,6 +836,7 @@ async function loadUsers(page=1){
     for(const id of [...usersSel]) if(!idsOnPage.has(id)) usersSel.delete(id);
     const rows = d.items.map(u => {
       const blocked = u.blocked ? `<span class="pill pill-blocked">Заблокирован</span>` : `<span class="pill pill-active">Активен</span>`;
+      const test = u.is_test_account ? `<span class="pill pill-test">Тест</span>` : '';
       const orders = u.orders_count != null ? u.orders_count : '—';
       const checked = usersSel.has(u.id) ? 'checked' : '';
       return `<tr>
@@ -802,9 +844,10 @@ async function loadUsers(page=1){
         <td><strong>${esc(u.email)}</strong></td>
         <td>${shortDate(u.created_at)}</td>
         <td>${orders}</td>
-        <td>${blocked}</td>
+        <td>${blocked} ${test}</td>
         <td style="white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="viewUser('${esc(u.id)}')">Профиль</button>
+          <button class="btn btn-outline btn-sm" onclick="toggleTestAccount('${esc(u.id)}', ${u.is_test_account?1:0})">${u.is_test_account?'Снять тест':'Пометить тест'}</button>
           ${u.blocked
             ? `<button class="btn btn-success btn-sm" onclick="toggleBlock('${esc(u.id)}', false)">Разблокировать</button>`
             : `<button class="btn btn-danger btn-sm" onclick="toggleBlock('${esc(u.id)}', true)">Блокировать</button>`
@@ -921,7 +964,7 @@ async function viewUser(id){
       <h2>${esc(u.email)}</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
         <div><div style="font-size:12px;color:var(--text-3);margin-bottom:2px;">ID</div><div style="font-size:13px;font-weight:600;word-break:break-all;">${esc(u.id)}</div></div>
-        <div><div style="font-size:12px;color:var(--text-3);margin-bottom:2px;">Статус</div><div>${u.blocked?'<span class="pill pill-blocked">Заблокирован</span>':'<span class="pill pill-active">Активен</span>'}</div></div>
+        <div><div style="font-size:12px;color:var(--text-3);margin-bottom:2px;">Статус</div><div>${u.blocked?'<span class="pill pill-blocked">Заблокирован</span>':'<span class="pill pill-active">Активен</span>'}${u.is_test_account?' <span class="pill pill-test">Тест</span>':''}</div></div>
         <div><div style="font-size:12px;color:var(--text-3);margin-bottom:2px;">Регистрация</div><div style="font-size:13px;">${shortDate(u.created_at)}</div></div>
         <div><div style="font-size:12px;color:var(--text-3);margin-bottom:2px;">Триал</div><div style="font-size:13px;">${u.trial_started_at?'Использован':'Не использован'}</div></div>
         <div><div style="font-size:12px;color:var(--text-3);margin-bottom:2px;">Реферальный код</div><div style="font-size:13px;font-weight:600;">${esc(u.referral_code||'—')}</div></div>
@@ -930,11 +973,14 @@ async function viewUser(id){
       <div style="font-size:14px;font-weight:700;margin-bottom:10px;">Подписки (${u.subscriptions?u.subscriptions.length:0})</div>
       ${subs}
       ${issueForm}
-      <div style="margin-top:20px;display:flex;gap:8px;">
+      <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">
         ${u.blocked
           ? `<button class="btn btn-success btn-block" onclick="toggleBlock('${esc(u.id)}',false);closeModal();">Разблокировать</button>`
           : `<button class="btn btn-danger btn-block" onclick="toggleBlock('${esc(u.id)}',true);closeModal();">Заблокировать</button>`
         }
+        <button class="btn ${u.is_test_account?'btn-outline':'btn-outline'}" style="width:100%;margin-top:8px;${u.is_test_account?'color:var(--accent);border-color:var(--accent);':''}" onclick="toggleTestAccount('${esc(u.id)}',${u.is_test_account?1:0});closeModal();">
+          ${u.is_test_account?'Снять пометку «тестовый аккаунт»':'Пометить тестовым аккаунтом'}
+        </button>
       </div>
     `);
   }catch(e){ showModal(`<h2>Ошибка</h2><p style="color:var(--text-2);">${esc(e.message)}</p>`); }
@@ -992,6 +1038,25 @@ async function toggleBlock(id, block){
   try{
     await api(`/admin/users/${id}/${block?'block':'unblock'}`, {method:'POST'});
     toast(block?'Пользователь заблокирован':'Пользователь разблокирован');
+    loadUsers(usersPage);
+  }catch(e){ toast(e.message, 'error'); }
+}
+
+// Ит.7: пометка «тестовый аккаунт». isTest — текущее состояние (1/0).
+// Пометка ослабляет guard confirm_email в дебаг-песочнице, поэтому действие
+// идёт через namedApi (X-Admin-Name) и подтверждается опасным диалогом.
+async function toggleTestAccount(id, isTest){
+  const ok = await confirmAction(
+    isTest ? 'Снять пометку «тестовый аккаунт»' : 'Пометить тестовым аккаунтом',
+    isTest
+      ? 'Пометка будет снята: дебаг-песочница снова потребует confirm_email для разрушающих действий.'
+      : 'Дебаг-песочница перестанет требовать confirm_email для разрушающих действий на этом пользователе. Действие пишется в аудит-лог.'
+  , { danger: !isTest });
+  if(!ok) return;
+  try{
+    await namedApi(`/admin/users/${id}/test-account`,
+      {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({is_test: !isTest})});
+    toast(isTest ? 'Пометка снята' : 'Аккаунт помечен как тестовый');
     loadUsers(usersPage);
   }catch(e){ toast(e.message, 'error'); }
 }
@@ -1366,6 +1431,28 @@ async function loadAnalytics(){
 }
 
 // ====== SETTINGS ======
+// Ит.6: табы раздела «Настройки». Таб хранит своё состояние в DOM, поэтому
+// переключение не теряет введённые данные.
+let settingsTab = 'tariffs';
+function settingsTabsNav(active){
+  const tabs = [
+    ['tariffs', 'Тарифы'],
+    ['payment', 'Платёжка'],
+    ['branding', 'Брендинг'],
+    ['trial', 'Триал · Рефка · Демо'],
+    ['export', 'Экспорт'],
+  ];
+  return `<div class="settings-tabs" role="tablist">` +
+    tabs.map(([id, label]) =>
+      `<button class="settings-tab ${id===active?'active':''}" data-tab="${id}" onclick="switchSettingsTab('${id}')" role="tab" aria-selected="${id===active}">${label}</button>`
+    ).join('') + `</div>`;
+}
+function switchSettingsTab(name){
+  settingsTab = name;
+  document.querySelectorAll('.settings-tab').forEach(b => b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('.settings-panel').forEach(p => p.classList.toggle('hidden', p.dataset.panel!==name));
+}
+
 async function loadSettings(){
   const el = document.getElementById('settings-content');
   el.innerHTML = spinner();
@@ -1375,130 +1462,130 @@ async function loadSettings(){
     window.__availableInbounds = d.available_inbounds || [];
     window.__adminTariffSlugs = Object.keys(d.tariffs || {});
     window.__adminGroupIds = Object.keys(d.tariff_groups || {});
-    let html = '';
+    window.__brandLogo = (d.branding||{}).logo_data_url || '';
 
-    // Available Inbounds editor
-    html += `<div class="chart-card"><div class="chart-title">Доступные инбаунды</div>
-      <div id="inbounds-editor">${renderInboundsEditor(d.available_inbounds||[])}</div>
-    </div>`;
-
-    // Tariffs editor
-    html += `<div class="chart-card"><div class="chart-title">Тарифы</div>
-      <div id="tariffs-editor">${renderTariffEditor(d.tariffs, d.available_inbounds||[])}</div>
-      <button class="btn btn-dark" style="margin-top:14px;" onclick="saveTariffs()">Сохранить тарифы</button>
-    </div>`;
-
-    // Tariff groups editor
-    html += `<div class="chart-card"><div class="chart-title">Группы тарифов</div>
-      <div id="groups-editor">${renderGroupEditor(d.tariff_groups||{}, d.tariffs||{}, d.available_inbounds||[])}</div>
-      <div style="display:flex;gap:8px;margin-top:14px;">
-        <button class="btn btn-outline" onclick="addGroupRow()">Добавить группу</button>
-        <button class="btn btn-dark" onclick="saveTariffGroups()">Сохранить группы</button>
+    // ——— Таб «Тарифы»: инбаунды + тарифы + группы ———
+    const pTariffs = `
+      <div class="chart-card"><div class="chart-title">Доступные инбаунды</div>
+        <div id="inbounds-editor">${renderInboundsEditor(d.available_inbounds||[])}</div>
       </div>
-    </div>`;
+      <div class="chart-card"><div class="chart-title">Тарифы</div>
+        <div id="tariffs-editor">${renderTariffEditor(d.tariffs, d.available_inbounds||[])}</div>
+        <button class="btn btn-dark" style="margin-top:14px;" onclick="saveTariffs()">Сохранить тарифы</button>
+      </div>
+      <div class="chart-card"><div class="chart-title">Группы тарифов</div>
+        <div id="groups-editor">${renderGroupEditor(d.tariff_groups||{}, d.tariffs||{}, d.available_inbounds||[])}</div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button class="btn btn-outline" onclick="addGroupRow()">Добавить группу</button>
+          <button class="btn btn-dark" onclick="saveTariffGroups()">Сохранить группы</button>
+        </div>
+      </div>`;
 
-    // Payment provider editor
+    // ——— Таб «Платёжка» ———
     const pay = d.payment || {};
-    html += `<div class="chart-card"><div class="chart-title">Платёжная система</div>
-      <div class="form-row">
-        <div class="field" style="flex:1;"><label>Провайдер</label>
-          <select id="pay-provider" onchange="document.getElementById('pay-yk').style.display=this.value==='yookassa'?'':'none'">
-            <option value="platega" ${pay.provider==='platega'?'selected':''}>Platega</option>
-            <option value="yookassa" ${pay.provider==='yookassa'?'selected':''}>ЮKassa</option>
-          </select>
-        </div>
-      </div>
-      <div id="pay-yk" style="${pay.provider==='yookassa'?'':'display:none;'}">
+    const pPayment = `
+      <div class="chart-card"><div class="chart-title">Платёжная система</div>
         <div class="form-row">
-          <div class="field"><label>ЮKassa shop_id</label><input id="pay-shop" value="${esc(pay.yookassa_shop_id||'')}" placeholder="123456"></div>
-          <div class="field"><label>ЮKassa secret_key</label><input id="pay-secret" type="password" value="" placeholder="${pay.has_yookassa_secret ? '•••••••• (оставьте пустым, чтобы не менять)' : 'live_...'}" style="width:100%;"></div>
-        </div>
-        <p style="color:var(--text-2);font-size:12.5px;margin:0 0 10px;">ЮKassa: создайте платёж с redirect-confirmation. Вебхук отправляйте на <code>/webhook/yookassa</code> (или нажмите «Проверить подпись» — статус перепроверяется через API).</p>
-      </div>
-      <button class="btn btn-dark" style="margin-top:12px;" onclick="savePayment()">Сохранить платёжную систему</button>
-    </div>`;
-
-    // Branding editor (Часть 6: лого + тексты витрины)
-    const b = d.branding || {};
-    window.__brandLogo = b.logo_data_url || '';
-    html += `<div class="chart-card"><div class="chart-title">Брендинг</div>
-      <div class="form-row">
-        <div class="field" style="flex:1.5;"><label>Название сайта</label><input id="b-name" value="${esc(b.site_name||'')}" oninput="updatePreview()"></div>
-        <div class="field" style="flex:1;"><label>Акцентный цвет</label><input id="b-accent" type="color" value="${esc(b.accent_color||'#1F5F52')}" style="height:38px;padding:2px;cursor:pointer;" oninput="updatePreview()"></div>
-        <div class="field" style="flex:1.5;"><label>Контакт поддержки</label><input id="b-support" value="${esc(b.support_contact||'')}" placeholder="support@example.com"></div>
-      </div>
-      <div class="form-row">
-        <div class="field" style="flex:1.2;"><label>Логотип <small style="color:var(--text-3);">PNG/JPEG/SVG, до 300 КБ</small></label>
-          <input type="file" id="b-logo-file" accept="image/png,image/jpeg,image/svg+xml" style="display:none;" onchange="brandLogoFromFile(event)">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <button class="btn btn-outline btn-sm" onclick="document.getElementById('b-logo-file').click()">Загрузить</button>
-            <img id="b-logo-preview" ${b.logo_data_url ? `src="${b.logo_data_url}"` : ''} style="width:26px;height:26px;object-fit:contain;${b.logo_data_url?'':'display:none;'}" alt="лого">
-            <button class="btn btn-danger btn-sm" id="b-logo-clear" ${b.logo_data_url?'':'style="display:none;"'} onclick="brandLogoClear()">✕ Убрать</button>
+          <div class="field" style="flex:1;"><label>Провайдер</label>
+            <select id="pay-provider" onchange="document.getElementById('pay-yk').style.display=this.value==='yookassa'?'':'none'">
+              <option value="platega" ${pay.provider==='platega'?'selected':''}>Platega</option>
+              <option value="yookassa" ${pay.provider==='yookassa'?'selected':''}>ЮKassa</option>
+            </select>
           </div>
         </div>
-        <div class="field" style="flex:1.4;"><label>Meta-описание</label><input id="b-desc" value="${esc(b.site_description||'')}" placeholder="SEO-описание сайта" oninput="updatePreview()"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Заголовок первого экрана</label><input id="b-hero-title" value="${esc(b.hero_title||'')}" placeholder="Твой приватный доступ в сеть" oninput="updatePreview()"></div>
-        <div class="field"><label>Подзаголовок</label><input id="b-hero-sub" value="${esc(b.hero_subtitle||'')}" placeholder="VPN без логов и ограничений скорости" oninput="updatePreview()"></div>
-      </div>
-      <div class="field" style="margin-bottom:0;"><label>Текст подвала</label><input id="b-footer" value="${esc(b.footer_text||'')}" placeholder="© 2026 AWX VPN (пусто = по умолчанию)" oninput="updatePreview()"></div>
-      <button class="btn btn-dark" style="margin-top:12px;" onclick="saveBranding()">Сохранить брендинг</button>
-    </div>`;
-
-    // Export / import settings
-    html += `<div class="chart-card"><div class="chart-title">Экспорт / импорт настроек</div>
-      <p style="color:var(--text-2);font-size:13px;margin:0 0 12px;">Бэкап или перенос настроек (тарифы, группы, брендинг, триал, рефералка, промокоды) в JSON-файл.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn-outline" onclick="exportSettings()">Экспорт (JSON)</button>
-        <button class="btn btn-outline" onclick="document.getElementById('import-file').click()">Импорт из JSON</button>
-        <input type="file" id="import-file" accept=".json,application/json" style="display:none;" onchange="importSettings(event)">
-      </div>
-    </div>`;
-
-    // Trial settings
-    html += `<div class="chart-card"><div class="chart-title">Пробный период</div>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-        <div class="toggle ${d.trial.enabled?'on':''}" id="trial-toggle" onclick="this.classList.toggle('on')"></div>
-        <span style="font-size:14px;font-weight:500;">${d.trial.enabled?'Включён':'Выключен'}</span>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Дней</label><input type="number" id="trial-days" value="${d.trial.days}" min="1" max="365"></div>
-        <div class="field"><label>ГБ</label><input type="number" id="trial-gb" value="${d.trial.gb}" min="1"></div>
-        <div class="field"><label>Устройств</label><input type="number" id="trial-devices" value="${d.trial.devices}" min="1" max="20"></div>
-      </div>
-      <button class="btn btn-dark" onclick="saveTrial()">Сохранить</button>
-    </div>`;
-
-    // Referral settings
-    html += `<div class="chart-card"><div class="chart-title">Реферальная программа</div>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-        <div class="toggle ${d.referral.enabled?'on':''}" id="ref-toggle" onclick="this.classList.toggle('on')"></div>
-        <span style="font-size:14px;font-weight:500;">${d.referral.enabled?'Включена':'Выключена'}</span>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Бонус рефереру (%)</label><input type="number" id="ref-percent" value="${d.referral.bonus_percent}" min="0" max="100"></div>
-      </div>
-      <button class="btn btn-dark" onclick="saveReferral()">Сохранить</button>
-    </div>`;
-
-    // Demo mode
-    html += `<div class="chart-card"><div class="chart-title">Демо-режим</div>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <div class="toggle ${d.demo_mode?'on':''}" id="demo-toggle" onclick="this.classList.toggle('on');saveDemo();"></div>
-        <span style="font-size:14px;font-weight:500;">${d.demo_mode?'Включён (кнопка "Демо подписка" видна)':'Выключен'}</span>
-      </div>
-    </div>`;
-
-    // Часть 6: слева редакторы, справа липкое live-превью витрины
-    el.innerHTML = `<div class="settings-layout"><div>${html}</div>
-      <div class="preview-sticky">
-        <div class="chart-card">
-          <div class="chart-title">Предпросмотр витрины</div>
-          <div id="live-preview"></div>
+        <div id="pay-yk" style="${pay.provider==='yookassa'?'':'display:none;'}">
+          <div class="form-row">
+            <div class="field"><label>ЮKassa shop_id</label><input id="pay-shop" value="${esc(pay.yookassa_shop_id||'')}" placeholder="123456"></div>
+            <div class="field"><label>ЮKassa secret_key</label><input id="pay-secret" type="password" value="" placeholder="${pay.has_yookassa_secret ? '•••••••• (оставьте пустым, чтобы не менять)' : 'live_...'}" style="width:100%;"></div>
+          </div>
+          <p style="color:var(--text-2);font-size:12.5px;margin:0 0 10px;">ЮKassa: создайте платёж с redirect-confirmation. Вебхук отправляйте на <code>/webhook/yookassa</code> (или нажмите «Проверить подпись» — статус перепроверяется через API).</p>
         </div>
+        <button class="btn btn-dark" style="margin-top:12px;" onclick="savePayment()">Сохранить платёжную систему</button>
+      </div>`;
+
+    // ——— Таб «Брендинг» (лого + тексты витрины) ———
+    const b = d.branding || {};
+    const pBranding = `
+      <div class="chart-card"><div class="chart-title">Брендинг</div>
+        <div class="form-row">
+          <div class="field" style="flex:1.5;"><label>Название сайта</label><input id="b-name" value="${esc(b.site_name||'')}" oninput="updatePreview()"></div>
+          <div class="field" style="flex:1;"><label>Акцентный цвет</label><input id="b-accent" type="color" value="${esc(b.accent_color||'#1F5F52')}" style="height:38px;padding:2px;cursor:pointer;" oninput="updatePreview()"></div>
+          <div class="field" style="flex:1.5;"><label>Контакт поддержки</label><input id="b-support" value="${esc(b.support_contact||'')}" placeholder="support@example.com"></div>
+        </div>
+        <div class="form-row">
+          <div class="field" style="flex:1.2;"><label>Логотип <small style="color:var(--text-3);">PNG/JPEG/SVG, до 300 КБ</small></label>
+            <input type="file" id="b-logo-file" accept="image/png,image/jpeg,image/svg+xml" style="display:none;" onchange="brandLogoFromFile(event)">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <button class="btn btn-outline btn-sm" onclick="document.getElementById('b-logo-file').click()">Загрузить</button>
+              <img id="b-logo-preview" ${b.logo_data_url ? `src="${b.logo_data_url}"` : ''} style="width:26px;height:26px;object-fit:contain;${b.logo_data_url?'':'display:none;'}" alt="лого">
+              <button class="btn btn-danger btn-sm" id="b-logo-clear" ${b.logo_data_url?'':'style="display:none;"'} onclick="brandLogoClear()">✕ Убрать</button>
+            </div>
+          </div>
+          <div class="field" style="flex:1.4;"><label>Meta-описание</label><input id="b-desc" value="${esc(b.site_description||'')}" placeholder="SEO-описание сайта" oninput="updatePreview()"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Заголовок первого экрана</label><input id="b-hero-title" value="${esc(b.hero_title||'')}" placeholder="Твой приватный доступ в сеть" oninput="updatePreview()"></div>
+          <div class="field"><label>Подзаголовок</label><input id="b-hero-sub" value="${esc(b.hero_subtitle||'')}" placeholder="VPN без логов и ограничений скорости" oninput="updatePreview()"></div>
+        </div>
+        <div class="field" style="margin-bottom:0;"><label>Текст подвала</label><input id="b-footer" value="${esc(b.footer_text||'')}" placeholder="© 2026 AWX VPN (пусто = по умолчанию)" oninput="updatePreview()"></div>
+        <button class="btn btn-dark" style="margin-top:12px;" onclick="saveBranding()">Сохранить брендинг</button>
+      </div>`;
+
+    // ——— Таб «Триал · Рефка · Демо» ———
+    const pTrial = `
+      <div class="chart-card"><div class="chart-title">Пробный период</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+          <div class="toggle ${d.trial.enabled?'on':''}" id="trial-toggle" onclick="this.classList.toggle('on')"></div>
+          <span style="font-size:14px;font-weight:500;">${d.trial.enabled?'Включён':'Выключен'}</span>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Дней</label><input type="number" id="trial-days" value="${d.trial.days}" min="1" max="365"></div>
+          <div class="field"><label>ГБ</label><input type="number" id="trial-gb" value="${d.trial.gb}" min="1"></div>
+          <div class="field"><label>Устройств</label><input type="number" id="trial-devices" value="${d.trial.devices}" min="1" max="20"></div>
+        </div>
+        <button class="btn btn-dark" onclick="saveTrial()">Сохранить</button>
       </div>
-    </div>`;
+      <div class="chart-card"><div class="chart-title">Реферальная программа</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+          <div class="toggle ${d.referral.enabled?'on':''}" id="ref-toggle" onclick="this.classList.toggle('on')"></div>
+          <span style="font-size:14px;font-weight:500;">${d.referral.enabled?'Включена':'Выключена'}</span>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Бонус рефереру (%)</label><input type="number" id="ref-percent" value="${d.referral.bonus_percent}" min="0" max="100"></div>
+        </div>
+        <button class="btn btn-dark" onclick="saveReferral()">Сохранить</button>
+      </div>
+      <div class="chart-card"><div class="chart-title">Демо-режим</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="toggle ${d.demo_mode?'on':''}" id="demo-toggle" onclick="this.classList.toggle('on');saveDemo();"></div>
+          <span style="font-size:14px;font-weight:500;">${d.demo_mode?'Включён (кнопка "Демо подписка" видна)':'Выключен'}</span>
+        </div>
+      </div>`;
+
+    // ——— Таб «Экспорт» ———
+    const pExport = `
+      <div class="chart-card"><div class="chart-title">Экспорт / импорт настроек</div>
+        <p style="color:var(--text-2);font-size:13px;margin:0 0 12px;">Бэкап или перенос настроек (тарифы, группы, брендинг, триал, рефералка, промокоды) в JSON-файл.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline" onclick="exportSettings()">Экспорт (JSON)</button>
+          <button class="btn btn-outline" onclick="document.getElementById('import-file').click()">Импорт из JSON</button>
+          <input type="file" id="import-file" accept=".json,application/json" style="display:none;" onchange="importSettings(event)">
+        </div>
+      </div>`;
+
+    // Ит.6: табы сверху, слева активная панель, справа липкое live-превью витрины
+    const panels = { tariffs:pTariffs, payment:pPayment, branding:pBranding, trial:pTrial, export:pExport };
+    el.innerHTML = `${settingsTabsNav(settingsTab)}
+      <div class="settings-layout">
+        <div>` + Object.entries(panels).map(([id, body]) =>
+          `<div class="settings-panel${id===settingsTab?'':' hidden'}" data-panel="${id}">${body}</div>`).join('') + `</div>
+        <div class="preview-sticky">
+          <div class="chart-card">
+            <div class="chart-title">Предпросмотр витрины</div>
+            <div id="live-preview"></div>
+          </div>
+        </div>
+      </div>`;
     updatePreview();
   }catch(e){ el.innerHTML = `<p style="color:var(--err);text-align:center;padding:48px;">Ошибка: ${esc(e.message)}</p>`; }
 }
@@ -1992,6 +2079,64 @@ async function namedApi(path, opts={}){
 // debugApi добавляет обязательный X-Admin-Name поверх api() (которая ставит X-Admin-Key)
 async function debugApi(path, opts={}){
   return namedApi(path, opts);
+}
+
+// ---------- Выбор юзера/заказа из списка (Ит.7) ----------
+// Вместо ручного ввода user_id/order_id — модалка поиска. kind: 'user' | 'order'.
+// Выбранный id кладётся в input#targetId.
+let _pkTimer = null;
+function openPicker(kind, targetId){
+  const isUser = kind==='user';
+  showModal(`
+    <h2>Выбор ${isUser?'пользователя':'заказа'}</h2>
+    <p style="font-size:13px;color:var(--text-3);margin:0 0 10px;">Начните вводить — список обновится сам.</p>
+    <input type="text" id="pk-q" placeholder="${isUser?'Поиск по email…':'Поиск по id / email / тарифу…'}" autofocus
+      oninput="pkSearch('${kind}','${targetId}')" style="width:100%;">
+    <div id="pk-list" style="margin-top:10px;max-height:52vh;overflow:auto;"></div>
+  `);
+  const q = document.getElementById('pk-q');
+  if(q) q.focus();
+  pkSearch(kind, targetId);
+}
+function pkSearch(kind, targetId){
+  clearTimeout(_pkTimer);
+  _pkTimer = setTimeout(()=>pkDo(kind, targetId), 250);
+}
+async function pkDo(kind, targetId){
+  const q = document.getElementById('pk-q')?.value.trim() || '';
+  const list = document.getElementById('pk-list');
+  if(!list) return;
+  list.innerHTML = '<div style="padding:8px;color:var(--text-3);font-size:13px;">Поиск…</div>';
+  try{
+    // Юзеры ищутся по email; заказы — через /admin/keys (id/email/тариф/подписка).
+    const path = kind==='user'
+      ? `/admin/users?q=${encodeURIComponent(q)}&page_size=20`
+      : `/admin/keys?q=${encodeURIComponent(q)}&page_size=20`;
+    const d = await api(path);
+    const items = d.items || [];
+    if(!items.length){ list.innerHTML = '<div style="padding:8px;color:var(--text-3);font-size:13px;">Ничего не найдено</div>'; return; }
+    list.innerHTML = items.map(it => {
+      const val = it.id; // id-шники hex/uuid — безопасны для подстановки в onclick
+      if(kind==='user'){
+        const test = it.is_test_account ? '<span class="pill pill-test">Тест</span>' : '';
+        const st = it.blocked ? 'заблокирован' : 'активен';
+        return `<button class="picker-row" onclick="pickEntity('${targetId}','${val}')">
+          <strong>${esc(it.email)}</strong>
+          <span style="font-size:12px;color:var(--text-3);"><code>${esc(it.id)}</code> ${test} · ${st}</span>
+        </button>`;
+      }
+      return `<button class="picker-row" onclick="pickEntity('${targetId}','${val}')">
+        <strong>${esc(it.id)} · ${esc(it.tariff)}</strong>
+        <span style="font-size:12px;color:var(--text-3);">${esc(it.user_email||'—')} · ${statusPill(it.key_status||it.status)}${it.expires_at?` · истекает ${esc(it.expires_at)}`:''}</span>
+      </button>`;
+    }).join('');
+  }catch(e){ list.innerHTML = `<div style="padding:8px;color:var(--danger,#D03B3B);font-size:13px;">Ошибка: ${esc(e.message)}</div>`; }
+}
+function pickEntity(targetId, val){
+  const el = document.getElementById(targetId);
+  if(el) el.value = val;
+  closeModal();
+  toast('Выбрано');
 }
 
 async function loadDebug(){
