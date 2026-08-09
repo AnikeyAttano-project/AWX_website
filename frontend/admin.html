@@ -101,6 +101,15 @@
   /* Pagination */
   .pager{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:13.5px;color:var(--text-2);border-top:1px solid var(--border);}
   .pager-btns{display:flex;gap:6px;}
+  /* Sortable columns */
+  th.sortable{cursor:pointer;user-select:none;white-space:nowrap;}
+  th.sortable:hover{color:var(--text-2);}
+  .sort-arrow{display:inline-block;width:12px;height:12px;vertical-align:-2px;margin-left:4px;opacity:.35;transition:opacity var(--dur-2);}
+  .sort-arrow.asc::after{content:'▲';font-size:8px;line-height:1;display:inline-block;}
+  .sort-arrow.desc::after{content:'▼';font-size:8px;line-height:1;display:inline-block;}
+  .sort-arrow.active{opacity:1;color:var(--accent);}
+  /* Bulk action bar */
+  .bulk-bar{display:inline-flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--accent-soft);border:1px solid var(--accent);}
   /* Modal */
   .modal-overlay{display:none;position:fixed;inset:0;background:rgba(35,32,25,.45);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:100;align-items:center;justify-content:center;padding:24px;animation:fadeIn var(--dur-2) var(--ease);}
   .modal-overlay.active{display:flex;}
@@ -294,9 +303,22 @@
           <input type="text" id="users-q" placeholder="Поиск по email..." oninput="debouncedLoadUsers()">
         </div>
         <span id="users-total" style="font-size:13px;color:var(--text-3);"></span>
+        <span id="users-bulk" class="bulk-bar" style="display:none;">
+          <span style="font-size:12px;color:var(--text-3);">Выбрано: <b id="users-sel-count">0</b></span>
+          <button class="btn btn-danger btn-sm" onclick="bulkSetBlocked(true)">Блокировать</button>
+          <button class="btn btn-success btn-sm" onclick="bulkSetBlocked(false)">Разблокировать</button>
+          <button class="btn btn-outline btn-sm" onclick="clearUsersSel()">Снять</button>
+        </span>
       </div>
       <div class="tbl-wrap">
-        <table><thead><tr><th>Email</th><th>Дата</th><th>Подписки</th><th>Статус</th><th>Действия</th></tr></thead>
+        <table><thead><tr>
+          <th style="width:34px;"><input type="checkbox" id="users-sel-all" onchange="toggleAllUsers(this.checked)"></th>
+          <th class="sortable" data-sort="email" onclick="sortUsers('email')">Email <span class="sort-arrow" data-arrow="email"></span></th>
+          <th class="sortable" data-sort="created_at" onclick="sortUsers('created_at')">Дата <span class="sort-arrow" data-arrow="created_at"></span></th>
+          <th class="sortable" data-sort="orders_count" onclick="sortUsers('orders_count')">Подписки <span class="sort-arrow" data-arrow="orders_count"></span></th>
+          <th>Статус</th>
+          <th>Действия</th>
+        </tr></thead>
         <tbody id="users-tbody"></tbody></table>
         <div id="users-pager" class="pager"></div>
       </div>
@@ -322,9 +344,23 @@
           </select>
         </div>
         <span id="keys-total" style="font-size:13px;color:var(--text-3);"></span>
+        <span id="keys-bulk" class="bulk-bar" style="display:none;">
+          <span style="font-size:12px;color:var(--text-3);">Выбрано: <b id="keys-sel-count">0</b></span>
+          <button class="btn btn-danger btn-sm" onclick="bulkDeleteKeys()">Удалить</button>
+          <button class="btn btn-outline btn-sm" onclick="clearKeysSel()">Снять</button>
+        </span>
       </div>
       <div class="tbl-wrap">
-        <table><thead><tr><th>ID</th><th>Тариф</th><th>Клиент</th><th>Пользователь</th><th>Статус</th><th>Истекает</th><th>Действия</th></tr></thead>
+        <table><thead><tr>
+          <th style="width:34px;"><input type="checkbox" id="keys-sel-all" onchange="toggleAllKeys(this.checked)"></th>
+          <th class="sortable" data-sort="id" onclick="sortKeys('id')">ID <span class="sort-arrow" data-arrow="id"></span></th>
+          <th class="sortable" data-sort="tariff" onclick="sortKeys('tariff')">Тариф <span class="sort-arrow" data-arrow="tariff"></span></th>
+          <th>Клиент</th>
+          <th class="sortable" data-sort="email" onclick="sortKeys('email')">Пользователь <span class="sort-arrow" data-arrow="email"></span></th>
+          <th>Статус</th>
+          <th class="sortable" data-sort="expires_at" onclick="sortKeys('expires_at')">Истекает <span class="sort-arrow" data-arrow="expires_at"></span></th>
+          <th>Действия</th>
+        </tr></thead>
         <tbody id="keys-tbody"></tbody></table>
         <div id="keys-pager" class="pager"></div>
       </div>
@@ -510,6 +546,14 @@ function spinner(msg=''){
 function emptyRow(colspan, msg='Нет данных'){
   return `<tr><td colspan="${colspan}" class="tbl-empty">${esc(msg)}</td></tr>`;
 }
+// Скелетон-строки таблицы (состояние загрузки вместо пустого/спиннера)
+function skeletonRows(colspan, rows=5){
+  return Array.from({length:rows}, () => `<tr>${Array.from({length:colspan}, () =>
+    `<td style="padding:11px 12px;"><div class="skel"></div></td>`).join('')}</tr>`).join('');
+}
+document.addEventListener('DOMContentLoaded', ()=>{ const st=document.createElement('style');
+  st.textContent='.skel{height:12px;border-radius:6px;background:var(--border);animation:skelpulse 1.2s ease-in-out infinite}@keyframes skelpulse{0%,100%{opacity:.5}50%{opacity:1}}';
+  document.head.appendChild(st); });
 // Общая модалка подтверждения. Возвращает Promise<boolean>; resolve(true) по кнопке,
 // Отмена/крестик/оверлей — promise остаётся незакрытым (вызывающий просто не продолжит).
 function confirmAction(title, desc, {danger=true, confirmText='Подтвердить'}={}){
@@ -570,7 +614,7 @@ function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('o
 document.addEventListener('click', e=>{ if(e.target.closest('#app') && !e.target.closest('.sidebar') && !e.target.closest('.hamburger')) document.getElementById('sidebar').classList.remove('open'); });
 
 // Key status
-const STATUS_MAP = {active:{label:'Активен',cls:'pill-active'},expired:{label:'Истёк',cls:'pill-expired'},error:{label:'Ошибка',cls:'pill-error'},pending:{label:'Ожидание',cls:'pill-pending'},deleted:{label:'Удалён',cls:'pill-deleted'}};
+const STATUS_MAP = {active:{label:'Активен',cls:'pill-active'},expired:{label:'Истёк',cls:'pill-expired'},error:{label:'Ошибка',cls:'pill-error'},pending:{label:'Ожидание',cls:'pill-pending'},deleted:{label:'Удалён',cls:'pill-deleted'},cancelled:{label:'Отменён',cls:'pill-expired'}};
 function statusPill(s){ const info=STATUS_MAP[s]||{label:s,cls:'pill-pending'}; return `<span class="pill ${info.cls}">${info.label}</span>`; }
 
 // ====== LOGIN ======
@@ -678,23 +722,32 @@ async function loadDashboard(){
 // ====== USERS ======
 let usersPage = 1;
 let _usersTimer = null;
+let usersSort = { by: 'created_at', dir: 'desc' };
+const usersSel = new Set();
 function debouncedLoadUsers(){ clearTimeout(_usersTimer); _usersTimer=setTimeout(()=>loadUsers(1), 300); }
 
 async function loadUsers(page=1){
   usersPage = page;
   const q = document.getElementById('users-q').value.trim();
+  document.getElementById('users-tbody').innerHTML = skeletonRows(6, 5);
   try{
-    const d = await api(`/admin/users?page=${page}&page_size=20&q=${encodeURIComponent(q)}`);
+    const d = await api(`/admin/users?page=${page}&page_size=20&q=${encodeURIComponent(q)}`
+      + `&sort_by=${usersSort.by}&sort_dir=${usersSort.dir}`);
     document.getElementById('users-total').textContent = `${d.total} пользователей`;
+    // Убираем из выделения удалённых из выборки (пагинация/фильтр)
+    const idsOnPage = new Set(d.items.map(u=>u.id));
+    for(const id of [...usersSel]) if(!idsOnPage.has(id)) usersSel.delete(id);
     const rows = d.items.map(u => {
       const blocked = u.blocked ? `<span class="pill pill-blocked">Заблокирован</span>` : `<span class="pill pill-active">Активен</span>`;
       const orders = u.orders_count != null ? u.orders_count : '—';
+      const checked = usersSel.has(u.id) ? 'checked' : '';
       return `<tr>
+        <td><input type="checkbox" class="row-check" data-id="${esc(u.id)}" ${checked} onchange="onUserCheck(this)"></td>
         <td><strong>${esc(u.email)}</strong></td>
         <td>${shortDate(u.created_at)}</td>
         <td>${orders}</td>
         <td>${blocked}</td>
-        <td>
+        <td style="white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="viewUser('${esc(u.id)}')">Профиль</button>
           ${u.blocked
             ? `<button class="btn btn-success btn-sm" onclick="toggleBlock('${esc(u.id)}', false)">Разблокировать</button>`
@@ -703,8 +756,65 @@ async function loadUsers(page=1){
         </td>
       </tr>`;
     }).join('');
-    document.getElementById('users-tbody').innerHTML = rows || emptyRow(5, 'Пользователей нет');
+    document.getElementById('users-tbody').innerHTML = rows || emptyRow(6, 'Пользователей нет');
+    syncUsersSelectAll();
+    updateUsersBulkBar();
     renderPager('users-pager', d, loadUsers);
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+function onUserCheck(cb){
+  if(cb.checked) usersSel.add(cb.dataset.id); else usersSel.delete(cb.dataset.id);
+  syncUsersSelectAll(null);
+  updateUsersBulkBar();
+}
+function toggleAllUsers(checked){
+  document.querySelectorAll('#users-tbody .row-check').forEach(cb => {
+    cb.checked = checked;
+    if(checked) usersSel.add(cb.dataset.id); else usersSel.delete(cb.dataset.id);
+  });
+  updateUsersBulkBar();
+}
+function syncUsersSelectAll(){
+  const boxes = document.querySelectorAll('#users-tbody .row-check');
+  const all = document.getElementById('users-sel-all');
+  if(!boxes.length){ all.checked=false; all.indeterminate=false; return; }
+  const onPage = [...boxes].filter(cb=>cb.checked).length;
+  all.checked = onPage === boxes.length;
+  all.indeterminate = onPage > 0 && onPage < boxes.length;
+}
+function updateUsersBulkBar(){
+  const el = document.getElementById('users-bulk');
+  const n = usersSel.size;
+  document.getElementById('users-sel-count').textContent = n;
+  el.style.display = n ? 'inline-flex' : 'none';
+}
+function clearUsersSel(){ usersSel.clear(); document.querySelectorAll('#users-tbody .row-check').forEach(cb=>cb.checked=false); updateUsersBulkBar(); }
+
+function sortUsers(col){
+  if(usersSort.by === col){ usersSort.dir = usersSort.dir==='asc' ? 'desc' : 'asc'; }
+  else { usersSort.by = col; usersSort.dir = 'asc'; }
+  renderSortArrows('users', usersSort);
+  loadUsers(1);
+}
+
+async function bulkSetBlocked(block){
+  if(!usersSel.size) return;
+  const n = usersSel.size;
+  const ok = await confirmAction(
+    block ? `Заблокировать (${n})` : `Разблокировать (${n})`,
+    block
+      ? `Выбранные пользователи (${n}) не смогут войти и использовать ключи.`
+      : `Выбранным пользователям (${n}) будет восстановлен доступ.`,
+    { danger: block }
+  );
+  if(!ok) return;
+  try{
+    const d = await api(`/admin/users/${block?'bulk-block':'bulk-unblock'}`,
+      {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[...usersSel]})});
+    toast(`${block?'Заблокировано':'Разблокировано'}: ${d.count}`);
+    clearUsersSel();
+    loadUsers(usersPage);
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
@@ -839,22 +949,41 @@ function renderPager(containerId, data, loadFn){
     <div class="pager-btns">${prev}${next}</div>
   `;
 }
+// Стрелки сортировки в шапке таблицы. prefix: 'users' | 'keys'
+function renderSortArrows(prefix, sortState){
+  document.querySelectorAll(`#view-${prefix} .sort-arrow`).forEach(a => {
+    a.classList.remove('active','asc','desc');
+  });
+  if(sortState.by){
+    const arrow = document.querySelector(`#view-${prefix} .sort-arrow[data-arrow="${sortState.by}"]`);
+    if(arrow) arrow.classList.add('active', sortState.dir);
+  }
+}
 
 // ====== KEYS ======
 let keysPage = 1;
 let _keysTimer = null;
+let keysSort = { by: 'created_at', dir: 'desc' };
+const keysSel = new Set();
 function debouncedLoadKeys(){ clearTimeout(_keysTimer); _keysTimer=setTimeout(()=>loadKeys(1), 300); }
 
 async function loadKeys(page=1){
   keysPage = page;
   const q = document.getElementById('keys-q').value.trim();
   const st = document.getElementById('keys-status').value;
+  document.getElementById('keys-tbody').innerHTML = skeletonRows(8, 5);
   try{
-    const d = await api(`/admin/keys?page=${page}&page_size=20&q=${encodeURIComponent(q)}&status=${st}`);
+    const d = await api(`/admin/keys?page=${page}&page_size=20&q=${encodeURIComponent(q)}&status=${st}`
+      + `&sort_by=${keysSort.by}&sort_dir=${keysSort.dir}`);
     document.getElementById('keys-total').textContent = `${d.total} ключей`;
+    const idsOnPage = new Set(d.items.map(k=>k.id));
+    for(const id of [...keysSel]) if(!idsOnPage.has(id)) keysSel.delete(id);
     const rows = d.items.map(k => {
       const status = k.key_status || k.status;
+      const checked = keysSel.has(k.id) ? 'checked' : '';
+      const isDeleted = status==='deleted';
       return `<tr>
+        <td><input type="checkbox" class="row-check" data-id="${esc(k.id)}" ${checked} onchange="onKeyCheck(this)"></td>
         <td><code style="font-size:11px;">${esc(k.id)}</code></td>
         <td>${esc(k.tariff)}</td>
         <td style="font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;">${esc(k.xui_email||'—')}</td>
@@ -862,7 +991,7 @@ async function loadKeys(page=1){
         <td>${statusPill(status)}</td>
         <td style="font-size:12px;">${shortDate(k.expires_at)}</td>
         <td style="white-space:nowrap;">
-          ${status!=='deleted'?`
+          ${!isDeleted?`
             <button class="btn btn-outline btn-sm" onclick="extendKey('${esc(k.id)}','${esc(k.tariff)}')">Продлить</button>
             <button class="btn btn-outline btn-sm" onclick="setDevicesKey('${esc(k.id)}','${esc(k.tariff)}')">Устройства</button>
             <button class="btn btn-danger btn-sm" onclick="deleteKey('${esc(k.id)}')">Удалить</button>
@@ -870,8 +999,76 @@ async function loadKeys(page=1){
         </td>
       </tr>`;
     }).join('');
-    document.getElementById('keys-tbody').innerHTML = rows || emptyRow(7, 'Ключей нет');
+    document.getElementById('keys-tbody').innerHTML = rows || emptyRow(8, 'Ключей нет');
+    syncKeysSelectAll();
+    updateKeysBulkBar();
     renderPager('keys-pager', d, loadKeys);
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+function onKeyCheck(cb){
+  if(cb.checked) keysSel.add(cb.dataset.id); else keysSel.delete(cb.dataset.id);
+  syncKeysSelectAll(null);
+  updateKeysBulkBar();
+}
+function toggleAllKeys(checked){
+  document.querySelectorAll('#keys-tbody .row-check').forEach(cb => {
+    cb.checked = checked;
+    if(checked) keysSel.add(cb.dataset.id); else keysSel.delete(cb.dataset.id);
+  });
+  updateKeysBulkBar();
+}
+function syncKeysSelectAll(){
+  const boxes = document.querySelectorAll('#keys-tbody .row-check');
+  const all = document.getElementById('keys-sel-all');
+  if(!boxes.length){ all.checked=false; all.indeterminate=false; return; }
+  const onPage = [...boxes].filter(cb=>cb.checked).length;
+  all.checked = onPage === boxes.length;
+  all.indeterminate = onPage > 0 && onPage < boxes.length;
+}
+function updateKeysBulkBar(){
+  const el = document.getElementById('keys-bulk');
+  const n = keysSel.size;
+  document.getElementById('keys-sel-count').textContent = n;
+  el.style.display = n ? 'inline-flex' : 'none';
+}
+function clearKeysSel(){ keysSel.clear(); document.querySelectorAll('#keys-tbody .row-check').forEach(cb=>cb.checked=false); updateKeysBulkBar(); }
+
+function sortKeys(col){
+  if(keysSort.by === col){ keysSort.dir = keysSort.dir==='asc' ? 'desc' : 'asc'; }
+  else { keysSort.by = col; keysSort.dir = 'asc'; }
+  renderSortArrows('keys', keysSort);
+  loadKeys(1);
+}
+
+async function bulkDeleteKeys(){
+  if(!keysSel.size) return;
+  const n = keysSel.size;
+  const ok = await confirmAction(`Удалить ключи (${n})`,
+    `Ключи (<strong>${n}</strong>) будут удалены из панели 3x-UI и из БД. Действие необратимо.`,
+    { confirmText: 'Удалить' });
+  if(!ok) return;
+  try{
+    const d = await api(`/admin/keys/bulk-delete`,
+      {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[...keysSel]})});
+    clearKeysSel();
+    if(d.failed && d.failed.length){
+      // Часть ключей не удалена (панель недоступна) → предложить удалить их из БД
+      toast(`Удалено: ${d.deleted}, не удалось: ${d.failed.length} (панель недоступна)`, 'error');
+      const okForce = await confirmAction(`Удалить ${d.failed.length} из БД без панели?`,
+        'Панель 3x-UI недоступна. Эти ключи будут удалены только из БД (клиенты в панели останутся).',
+        { confirmText: 'Удалить из БД' });
+      if(okForce){
+        try{
+          const d2 = await api(`/admin/keys/bulk-delete?force=true`,
+            {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:d.failed})});
+          toast(`Удалено из БД: ${d2.deleted}`);
+        }catch(e2){ toast('Ошибка: '+e2.message, 'error'); }
+      }
+    } else {
+      toast(`Удалено ключей: ${d.deleted}`);
+    }
+    loadKeys(keysPage);
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 

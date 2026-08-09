@@ -116,6 +116,10 @@ class ManualKeyReissueRequest(BaseModel):
     order_id: str = Field(min_length=1, description="ID подписки пользователя")
 
 
+class BulkIdsRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, description="Список ID для массового действия")
+
+
 class TariffItem(BaseModel):
     days: int = Field(ge=1)
     price: float = Field(gt=0)
@@ -358,10 +362,13 @@ async def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: Optional[str] = Query(None),
+    sort_by: str = Query("created_at", pattern="^(created_at|email|orders_count|blocked)$"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     search = (q or "").strip()
     total = await count_users(search)
-    items = await list_users_page(search, page_size, (page - 1) * page_size)
+    items = await list_users_page(search, page_size, (page - 1) * page_size,
+                                  sort_by=sort_by, sort_dir=sort_dir)
     # Strip password_hash from response
     for item in items:
         item.pop("password_hash", None)
@@ -418,6 +425,35 @@ async def unblock_user(user_id: str):
         raise HTTPException(404, "User not found")
     await set_user_blocked(user_id, False)
     return {"ok": True, "blocked": False}
+
+
+# ————————————————— Массовые действия по юзерам (Ит.4) —————————————————
+
+async def _bulk_set_blocked(ids: list[str], blocked: bool) -> int:
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    async with _db() as db:
+        cur = await db.execute(
+            f"UPDATE users SET blocked = ? WHERE id IN ({placeholders})",
+            (1 if blocked else 0, *ids),
+        )
+        await db.commit()
+        return cur.rowcount
+
+
+@admin_router.post("/users/bulk-block")
+async def bulk_block_users(req: BulkIdsRequest):
+    n = await _bulk_set_blocked(req.ids, True)
+    await add_site_log("admin_users_bulk_block", actor="admin", details=f"count={n}")
+    return {"ok": True, "count": n}
+
+
+@admin_router.post("/users/bulk-unblock")
+async def bulk_unblock_users(req: BulkIdsRequest):
+    n = await _bulk_set_blocked(req.ids, False)
+    await add_site_log("admin_users_bulk_unblock", actor="admin", details=f"count={n}")
+    return {"ok": True, "count": n}
 
 
 # ————————————————— Ручные ключи (Ит.3) —————————————————
@@ -568,12 +604,23 @@ async def admin_cancel_key(
 #  KEYS (subscriptions / orders with VPN clients)
 # =====================================================================
 
+_KEYS_SORT_MAP = {
+    "created_at": "o.created_at",
+    "expires_at": "o.expires_at",
+    "tariff": "o.tariff",
+    "email": "u.email",
+    "id": "o.id",
+}
+
+
 @admin_router.get("/keys")
 async def list_keys(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status: Optional[str] = Query(None, description="active|expired|error|pending|deleted"),
     q: Optional[str] = Query(None, description="search by id, email, tariff, sub_url"),
+    sort_by: str = Query("created_at", pattern="^(created_at|expires_at|tariff|email|id)$"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     now = datetime.utcnow()
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -605,11 +652,12 @@ async def list_keys(
         params.extend([like, like, like, like, like])
 
     where_sql = " AND ".join(where_parts)
+    order_sql = f" ORDER BY {_KEYS_SORT_MAP.get(sort_by, 'o.created_at')} " \
+                f"{'ASC' if sort_dir.lower() == 'asc' else 'DESC'} LIMIT ? OFFSET ?"
     count_sql = f"SELECT COUNT(*) FROM orders o LEFT JOIN users u ON u.id = o.user_id WHERE {where_sql}"
     data_sql = f"""SELECT o.*, u.email AS user_email
                    FROM orders o LEFT JOIN users u ON u.id = o.user_id
-                   WHERE {where_sql}
-                   ORDER BY o.created_at DESC LIMIT ? OFFSET ?"""
+                   WHERE {where_sql}""" + order_sql
 
     total = await _scalar(count_sql, params)
     items = await _fetchall(data_sql, params + [page_size, (page - 1) * page_size])
@@ -727,6 +775,34 @@ async def delete_key(order_id: str, force: bool = Query(False)):
 
     await mark_order_deleted(order_id)
     return {"ok": True, "force": force}
+
+
+@admin_router.post("/keys/bulk-delete")
+async def bulk_delete_keys(req: BulkIdsRequest, force: bool = Query(False)):
+    """Массовое удаление ключей: клиент из 3x-UI + заказ в 'deleted'.
+
+    force=false — если панель недоступна для одного из ключей, он пропускается
+    и попадает в failed (остальные удаляются). force=true — удаляем из БД в любом случае.
+    """
+    deleted, failed = 0, []
+    for order_id in req.ids:
+        order = await get_order(order_id)
+        if not order:
+            failed.append(order_id)
+            continue
+        if order.get("xui_email"):
+            try:
+                await shared_state.delete_client(order["xui_email"])
+            except XuiError as e:
+                if not force:
+                    failed.append(order_id)
+                    continue
+                logger.warning("Bulk delete: panel error for %s: %s", order_id, e)
+        await mark_order_deleted(order_id)
+        deleted += 1
+    await add_site_log("admin_keys_bulk_delete", actor="admin",
+                       details=f"deleted={deleted} failed={len(failed)}")
+    return {"ok": True, "deleted": deleted, "failed": failed}
 
 
 # =====================================================================

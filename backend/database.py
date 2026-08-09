@@ -1296,11 +1296,25 @@ async def count_users(search: str = "") -> int:
         return row[0] if row else 0
 
 
-async def list_users_page(search: str, limit: int, offset: int) -> list[dict]:
+_USERS_SORT_MAP = {
+    "created_at": "u.created_at",
+    "email": "u.email",
+    "orders_count": "orders_count",
+    "blocked": "u.blocked",
+}
+
+
+async def list_users_page(search: str, limit: int, offset: int,
+                          sort_by: str = "created_at", sort_dir: str = "desc") -> list[dict]:
     """Страница пользователей с числом подписок (orders_count) для админ-таблицы.
 
     orders_count — число не-удалённых заказов пользователя (подписок и ключей).
+    sort_by/sort_dir — сортировка из белого списка столбцов (без SQL-инъекций).
     """
+    col = _USERS_SORT_MAP.get(sort_by, "u.created_at")
+    direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+    order_sql = f" ORDER BY {col} {direction} LIMIT ? OFFSET ?"
+
     async with _db() as db:
         db.row_factory = aiosqlite.Row
         select = (
@@ -1310,12 +1324,12 @@ async def list_users_page(search: str, limit: int, offset: int) -> list[dict]:
         )
         if search:
             cur = await db.execute(
-                select + " WHERE u.email LIKE ? ORDER BY u.created_at DESC LIMIT ? OFFSET ?",
+                select + " WHERE u.email LIKE ?" + order_sql,
                 (f"%{search}%", limit, offset),
             )
         else:
             cur = await db.execute(
-                select + " ORDER BY u.created_at DESC LIMIT ? OFFSET ?",
+                select + order_sql,
                 (limit, offset),
             )
         rows = await cur.fetchall()
