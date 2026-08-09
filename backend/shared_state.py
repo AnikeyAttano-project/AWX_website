@@ -439,13 +439,15 @@ async def _provision_renewal(renewal: dict):
     await activate_renewal(renewal["id"])
 
 
-async def _provision_order(order: dict):
+async def _provision_order(order: dict, days: int = None):
     """Выдача ключа в 3x-UI после подтверждения оплаты.
 
     Вся логика старого fulfill_order: идемпотентность (sub_url), атомарный
     DB-claim (begin_fulfillment/complete_fulfillment/fail_fulfillment), создание
     клиента в эффективных инбаундах тарифа, промо-код, add-ons, рефералка,
     site_log. Защиту от гонки (per-entity asyncio.Lock) даёт lifecycle.
+
+    days — переопределение срока для ручной выдачи админом (иначе дни тарифа).
     """
     order_id = order["id"]
 
@@ -465,7 +467,7 @@ async def _provision_order(order: dict):
         await mark_paid(order_id)
 
     tariff = settings.tariffs.get(order["tariff"])
-    days = tariff["days"] if tariff else 30
+    days = days if days else (tariff["days"] if tariff else 30)
     devices = tariff.get("devices", 1) if tariff else 1
 
     # Доп. устройства, купленные вместе с подпиской (add-on, pending/active).
@@ -564,12 +566,14 @@ async def _provision_order(order: dict):
         await fail_fulfillment(order_id, str(e))
 
 
-async def fulfill_order(order_id: str):
+async def fulfill_order(order_id: str, days: int = None):
     """Выдача ключа после оплаты. Тонкая обёртка над order_lifecycle.
 
     Вызывать ТОЛЬКО после подтверждения платежа (webhook / mock / confirm_and_fulfill).
+    days — переопределение срока для ручной выдачи админом.
     """
-    await order_lifecycle.fulfill(order_id)
+    kwargs = {"days": days} if days else None
+    await order_lifecycle.fulfill(order_id, provision_kwargs=kwargs)
 
 
 addon_lifecycle = PaymentLifecycle(

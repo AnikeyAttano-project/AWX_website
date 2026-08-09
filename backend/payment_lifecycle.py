@@ -94,11 +94,14 @@ class PaymentLifecycle:
 
     # ————————————————— Fulfill —————————————————
 
-    async def fulfill(self, entity_id: str) -> bool:
+    async def fulfill(self, entity_id: str, provision_kwargs: dict = None) -> bool:
         """
         Идемпотентная активация — вызывать ТОЛЬКО после того, как оплата уже
         подтверждена (см. confirm_and_fulfill). Возвращает True, если реально
         что-то активировал в этом вызове (для логов/тестов).
+
+        provision_kwargs — доп. аргументы для provision (например, переопределение
+        дней при ручной выдаче ключа админом); для addon/renewal не используется.
         """
         lock = await self._get_lock(entity_id)
         async with lock:
@@ -112,7 +115,7 @@ class PaymentLifecycle:
                 return False
             if self.activate is not None:
                 await self.activate(entity_id)
-            await self.provision(entity)
+            await self.provision(entity, **(provision_kwargs or {}))
             return True
 
     # ————————————————— Главная точка входа —————————————————

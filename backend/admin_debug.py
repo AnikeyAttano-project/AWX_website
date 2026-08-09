@@ -83,6 +83,13 @@ async def require_admin_name(x_admin_name: str = Header(default="", alias="X-Adm
     это место нужно будет заменить на настоящие именные учётки.
     """
     name = (x_admin_name or "").strip()
+    # HTTP-заголовки не несут кириллицу — фронт шлёт имя через encodeURIComponent,
+    # здесь раскодируем (см. debugApi в admin.html).
+    try:
+        import urllib.parse
+        name = urllib.parse.unquote(name).strip()
+    except Exception:
+        pass
     if not name:
         raise HTTPException(
             400,

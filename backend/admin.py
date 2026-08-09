@@ -25,6 +25,8 @@ Endpoints:
 import hmac
 import logging
 import json
+import uuid
+import urllib.parse
 from collections import defaultdict
 from typing import Optional
 from datetime import datetime, timedelta
@@ -42,8 +44,10 @@ from database import (
     add_site_log, get_site_logs, get_site_logs_filtered,
     create_promo_code, list_promo_codes, delete_promo_code, toggle_promo_code,
     get_analytics_funnel, get_analytics_by_tariff, get_analytics_anomalies,
+    create_order, set_order_user, mark_paid, save_subscription, delete_order,
 )
-from xui_client import _parse_inbound_ids
+from xui_client import _parse_inbound_ids, effective_inbounds, XuiError
+import shared_state
 from shared_state import get_real_ip
 
 logger = logging.getLogger(__name__)
@@ -101,6 +105,15 @@ class ExtendKeyRequest(BaseModel):
 
 class SetKeyDevicesRequest(BaseModel):
     total_devices: int = Field(5, ge=1, le=100, description="Итоговый лимит устройств (базовый + доп.)")
+
+
+class ManualKeyIssueRequest(BaseModel):
+    tariff: str = Field(min_length=1, description="Slug тарифа (например quantum_month)")
+    days: int = Field(0, ge=0, le=3650, description="Срок в днях; 0 = дни тарифа")
+
+
+class ManualKeyReissueRequest(BaseModel):
+    order_id: str = Field(min_length=1, description="ID подписки пользователя")
 
 
 class TariffItem(BaseModel):
@@ -379,6 +392,12 @@ async def get_user_detail(user_id: str):
     from database import count_referrals, ensure_referral_code
     user["referral_code"] = await ensure_referral_code(user_id)
     user["referral_count"] = await count_referrals(user_id)
+
+    # Тарифы для формы ручной выдачи ключа
+    user["available_tariffs"] = [
+        {"slug": slug, "title": t.get("title", slug), "days": t.get("days", 30)}
+        for slug, t in settings.tariffs.items()
+    ]
     user.pop("password_hash", None)
     return user
 
@@ -399,6 +418,150 @@ async def unblock_user(user_id: str):
         raise HTTPException(404, "User not found")
     await set_user_blocked(user_id, False)
     return {"ok": True, "blocked": False}
+
+
+# ————————————————— Ручные ключи (Ит.3) —————————————————
+# Выдача/перевыпуск/отмена ключей вручную (без оплаты). Аудит пишется в site_log
+# с именем админа из X-Admin-Name (иначе — 'admin').
+
+def _admin_name(x_admin_name: str) -> str:
+    """Имя админа из X-Admin-Name. HTTP-заголовки не несут кириллицу, поэтому
+    фронт шлёт имя через encodeURIComponent — здесь раскодируем обратно."""
+    raw = (x_admin_name or "").strip()
+    try:
+        return urllib.parse.unquote(raw).strip() or "admin"
+    except Exception:
+        return raw.strip() or "admin"
+
+@admin_router.post("/users/{user_id}/key/issue")
+async def admin_issue_key(
+    user_id: str,
+    req: ManualKeyIssueRequest,
+    x_admin_name: str = Header(default="", alias="X-Admin-Name"),
+):
+    """Выдать ключ вручную (без оплаты): тариф + срок, провижининг в 3x-UI."""
+    user = await get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    if user.get("blocked"):
+        raise HTTPException(400, "Пользователь заблокирован — выдача ключа недоступна")
+    tariff = settings.tariffs.get(req.tariff)
+    if not tariff:
+        raise HTTPException(400, f"Тариф '{req.tariff}' не существует")
+    days = req.days or int(tariff["days"])
+    days = max(1, min(days, 3650))
+
+    order_id = uuid.uuid4().hex[:12]
+    await create_order(order_id, req.tariff, amount=0, provider="manual")
+    await set_order_user(order_id, user_id)
+    await mark_paid(order_id)
+
+    await shared_state.fulfill_order(order_id, days=days)
+    order = await get_order(order_id)
+    if not order or order["status"] == "error":
+        err = (order or {}).get("error_msg") or "неизвестная ошибка провижининга"
+        await delete_order(order_id)
+        raise HTTPException(502, f"Не удалось выдать ключ: {err}")
+
+    actor = _admin_name(x_admin_name)
+    await add_site_log(
+        "admin_key_issue", actor=actor,
+        details=f"user={user_id} tariff={req.tariff} days={days} "
+                f"order={order_id} email={order.get('xui_email')}",
+    )
+    return {
+        "ok": True, "order_id": order_id,
+        "email": order.get("xui_email"), "sub_url": order.get("sub_url"),
+        "expires_at": order.get("expires_at"), "days": days,
+    }
+
+
+@admin_router.post("/users/{user_id}/key/reissue")
+async def admin_reissue_key(
+    user_id: str,
+    req: ManualKeyReissueRequest,
+    x_admin_name: str = Header(default="", alias="X-Admin-Name"),
+):
+    """Перевыпуск ключа: новый sub_id/sub_url. Срок подписки НЕ меняется."""
+    user = await get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    order = await get_order(req.order_id)
+    if not order or order.get("user_id") != user_id:
+        raise HTTPException(404, "Подписка не найдена у этого пользователя")
+    if order["status"] != "paid":
+        raise HTTPException(400, f"Перевыпуск возможен только для paid (сейчас '{order['status']}')")
+    if not order.get("xui_email") or not order.get("xui_sub_id"):
+        raise HTTPException(400, "Нет привязки к 3x-UI клиенту")
+
+    tariff = settings.tariffs.get(order["tariff"])
+    base_days = tariff["days"] if tariff else 30
+    devices = tariff["devices"] if tariff else 1
+
+    # Перевыпуск не продлевает: сохраняем текущее истечение
+    expiry_ms = None
+    if order.get("expires_at"):
+        try:
+            parsed = datetime.strptime(order["expires_at"], "%Y-%m-%d %H:%M:%S")
+            if parsed > datetime.utcnow():
+                expiry_ms = int(parsed.timestamp() * 1000)
+        except ValueError:
+            pass
+    if expiry_ms is None:
+        expiry_ms = int((datetime.utcnow() + timedelta(days=base_days)).timestamp() * 1000)
+
+    new_email = f"rekey-{req.order_id}-{uuid.uuid4().hex[:4]}@vpn.local"
+    try:
+        result = await shared_state.rekey_client(
+            old_email=order["xui_email"], new_email=new_email,
+            expiry_ms=expiry_ms, limit_ip=devices,
+            inbound_ids=effective_inbounds(order["tariff"]),
+        )
+        sub_url = await shared_state.get_subscription_url(result["sub_id"])
+        expires_at = datetime.utcfromtimestamp(expiry_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        await save_subscription(
+            req.order_id, result["email"], result["sub_id"], sub_url,
+            inbound_ids=",".join(str(x) for x in effective_inbounds(order["tariff"])),
+            expires_at=expires_at,
+        )
+    except XuiError as e:
+        logger.error("Admin reissue failed for order %s: %s", req.order_id, e)
+        raise HTTPException(502, f"Panel error: {e}")
+
+    actor = _admin_name(x_admin_name)
+    await add_site_log("admin_key_reissue", actor=actor,
+                       details=f"user={user_id} order={req.order_id}")
+    return {"ok": True, "order_id": req.order_id, "sub_url": sub_url,
+            "email": result["email"], "expires_at": expires_at}
+
+
+@admin_router.post("/users/{user_id}/key/{order_id}/cancel")
+async def admin_cancel_key(
+    user_id: str,
+    order_id: str,
+    x_admin_name: str = Header(default="", alias="X-Admin-Name"),
+):
+    """Отмена подписки: удаление клиента из 3x-UI + заказ в статус 'deleted'."""
+    user = await get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    order = await get_order(order_id)
+    if not order or order.get("user_id") != user_id:
+        raise HTTPException(404, "Подписка не найдена у этого пользователя")
+    if order["status"] in ("deleted", "cancelled"):
+        raise HTTPException(400, f"Подписка уже отменена (status='{order['status']}')")
+
+    if order.get("xui_email"):
+        try:
+            await shared_state.delete_client(order["xui_email"])
+        except XuiError as e:
+            raise HTTPException(502, f"Panel error: {e}")
+
+    await mark_order_deleted(order_id)
+    actor = _admin_name(x_admin_name)
+    await add_site_log("admin_key_cancel", actor=actor,
+                       details=f"user={user_id} order={order_id}")
+    return {"ok": True, "order_id": order_id}
 
 
 # =====================================================================

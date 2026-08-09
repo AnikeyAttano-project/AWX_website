@@ -714,17 +714,43 @@ async function viewUser(id){
     const u = await api('/admin/users/'+id);
     let subs = '';
     if(u.subscriptions && u.subscriptions.length){
-      subs = u.subscriptions.map(s => `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-        <div>
-          <strong style="font-size:13px;">${esc(s.tariff)}</strong>
-          <span style="font-size:12px;color:var(--text-3);margin-left:6px;">${esc(s.id)}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          ${statusPill(s.key_status||s.status)}
-          <span style="font-size:12px;color:var(--text-3);">${shortDate(s.expires_at)}</span>
-        </div>
-      </div>`).join('');
+      subs = u.subscriptions.map(s => {
+        const canReissue = s.status === 'paid';
+        const canCancel = !['deleted','cancelled'].includes(s.status);
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
+          <div style="min-width:0;">
+            <strong style="font-size:13px;">${esc(s.tariff)}</strong>
+            <span style="font-size:12px;color:var(--text-3);margin-left:6px;">${esc(s.id)}</span>
+            ${s.sub_url?`<div style="font-size:11px;color:var(--text-3);margin-top:2px;word-break:break-all;">${esc(s.sub_url)}</div>`:''}
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            ${statusPill(s.key_status||s.status)}
+            <span style="font-size:12px;color:var(--text-3);">${shortDate(s.expires_at)}</span>
+            ${canReissue?`<button class="btn btn-outline btn-sm" onclick="reissueKey('${esc(u.id)}','${esc(s.id)}')">Перевыпустить</button>`:''}
+            ${canCancel?`<button class="btn btn-danger btn-sm" onclick="cancelKey('${esc(u.id)}','${esc(s.id)}')">Отменить</button>`:''}
+          </div>
+        </div>`;
+      }).join('');
     } else { subs = '<p style="color:var(--text-3);font-size:13px;padding:8px 0;">Нет подписок</p>'; }
+
+    const tariffOpts = (u.available_tariffs||[]).map(t =>
+      `<option value="${esc(t.slug)}">${esc(t.title)} (${t.days} дн.)</option>`).join('');
+    const issueForm = (u.available_tariffs && u.available_tariffs.length)
+      ? `<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="font-size:14px;font-weight:700;margin-bottom:10px;">Выдать ключ вручную</div>
+          <div style="display:flex;gap:8px;align-items:flex-end;">
+            <div class="field" style="flex:1;margin:0;">
+              <label>Тариф</label>
+              <select id="issue-tariff">${tariffOpts}</select>
+            </div>
+            <div class="field" style="width:110px;margin:0;">
+              <label>Дней <small style="color:var(--text-3);font-weight:400;">0=тариф</small></label>
+              <input type="number" id="issue-days" value="0" min="0" max="3650">
+            </div>
+            <button class="btn btn-dark" onclick="issueKey('${esc(u.id)}')">Выдать</button>
+          </div>
+        </div>` : '';
+
     showModal(`
       <h2>${esc(u.email)}</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
@@ -737,6 +763,7 @@ async function viewUser(id){
       </div>
       <div style="font-size:14px;font-weight:700;margin-bottom:10px;">Подписки (${u.subscriptions?u.subscriptions.length:0})</div>
       ${subs}
+      ${issueForm}
       <div style="margin-top:20px;display:flex;gap:8px;">
         ${u.blocked
           ? `<button class="btn btn-success btn-block" onclick="toggleBlock('${esc(u.id)}',false);closeModal();">Разблокировать</button>`
@@ -745,6 +772,47 @@ async function viewUser(id){
       </div>
     `);
   }catch(e){ showModal(`<h2>Ошибка</h2><p style="color:var(--text-2);">${esc(e.message)}</p>`); }
+}
+
+// ——— Ручные ключи (Ит.3): выдача / перевыпуск / отмена ———
+
+async function issueKey(uid){
+  const tariff = document.getElementById('issue-tariff')?.value;
+  const days = parseInt(document.getElementById('issue-days')?.value)||0;
+  if(!tariff){ toast('Выберите тариф', 'error'); return; }
+  const ok = await confirmAction('Выдать ключ вручную',
+    `Пользователю будет выдан ключ тарифа <strong>${esc(tariff)}</strong>` +
+    (days?` на <strong>${days}</strong> дней`:' (срок по тарифу)') + ` без оплаты.`);
+  if(!ok) return;
+  try{
+    await namedApi(`/admin/users/${uid}/key/issue`,
+      {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tariff, days})});
+    toast('Ключ выдан');
+    viewUser(uid);
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function reissueKey(uid, orderId){
+  const ok = await confirmAction('Перевыпустить ключ',
+    `Ключ <strong>${esc(orderId)}</strong> получит новый sub_id и ссылку. Срок подписки не меняется.`);
+  if(!ok) return;
+  try{
+    await namedApi(`/admin/users/${uid}/key/reissue`,
+      {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_id:orderId})});
+    toast('Ключ перевыпущен');
+    viewUser(uid);
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
+}
+
+async function cancelKey(uid, orderId){
+  const ok = await confirmAction('Отменить подписку',
+    `Ключ <strong>${esc(orderId)}</strong> будет удалён из панели 3x-UI, подписка помечена отменённой. Действие необратимо.`);
+  if(!ok) return;
+  try{
+    await namedApi(`/admin/users/${uid}/key/${orderId}/cancel`, {method:'POST'});
+    toast('Подписка отменена');
+    viewUser(uid);
+  }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
 async function toggleBlock(id, block){
@@ -1657,13 +1725,19 @@ function dbgVal(id){ return (document.getElementById(id).value||'').trim(); }
 function dbgConfirmEmail(){ return (document.getElementById('dbg-confirm-email').value||'').trim(); }
 function saveDebugAdminName(){ localStorage.setItem(ADMIN_NAME_STORAGE, dbgVal('dbg-admin-name')); }
 
-// debugApi добавляет обязательный X-Admin-Name поверх api() (которая ставит X-Admin-Key)
-async function debugApi(path, opts={}){
+// api с обязательным X-Admin-Name (кто выполняет действие — пишется в audit-лог).
+// Имя кодируем encodeURIComponent: HTTP-заголовки не несут кириллицу, бэкенд раскодирует.
+async function namedApi(path, opts={}){
   const name = dbgVal('dbg-admin-name');
   if(!name){ toast('Укажите X-Admin-Name', 'error'); throw new Error('X-Admin-Name required'); }
   localStorage.setItem(ADMIN_NAME_STORAGE, name);
-  const h = Object.assign({'X-Admin-Name': name}, opts.headers||{});
+  const h = Object.assign({'X-Admin-Name': encodeURIComponent(name)}, opts.headers||{});
   return api(path, Object.assign({}, opts, {headers:h}));
+}
+
+// debugApi добавляет обязательный X-Admin-Name поверх api() (которая ставит X-Admin-Key)
+async function debugApi(path, opts={}){
+  return namedApi(path, opts);
 }
 
 async function loadDebug(){

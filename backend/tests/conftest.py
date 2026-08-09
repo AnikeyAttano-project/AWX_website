@@ -158,10 +158,14 @@ def mocks(monkeypatch):
     monkeypatch.setattr(shared_state, "get_subscription_url", _fake_get_subscription_url)
     monkeypatch.setattr(shared_state, "get_sub_links", _fake_get_share_links)
     monkeypatch.setattr(shared_state, "check_client_status", _fake_check_client_status)
-    monkeypatch.setattr(shared_state, "delete_client",
-                        lambda email: {"ok": True})
-    monkeypatch.setattr(shared_state, "rekey_client",
-                        lambda email, inbound_ids=None: {"sub_id": "sub-rekeyed"})
+    async def _fake_delete_client(email):
+        return {"ok": True}
+
+    async def _fake_rekey_client(old_email, new_email, expiry_ms, limit_ip=1, total_gb=0, inbound_ids=None):
+        return {"email": new_email, "sub_id": "sub-rekeyed"}
+
+    monkeypatch.setattr(shared_state, "delete_client", _fake_delete_client)
+    monkeypatch.setattr(shared_state, "rekey_client", _fake_rekey_client)
 
     yield provider, calls
 
