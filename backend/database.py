@@ -681,6 +681,31 @@ async def get_site_logs(limit: int = 200) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+async def get_site_logs_filtered(page: int = 1, page_size: int = 50,
+                                 action: str = None, actor: str = None) -> tuple:
+    """Лог с фильтрами action/actor и пагинацией; возвращает (items, total)."""
+    page = max(1, page)
+    page_size = max(1, min(page_size, 5000))
+    where, params = [], []
+    if action:
+        where.append("action = ?")
+        params.append(action)
+    if actor:
+        where.append("actor = ?")
+        params.append(actor)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(f"SELECT COUNT(*) FROM site_log{where_sql}", params)
+        total = (await cur.fetchone())[0]
+        cur = await db.execute(
+            f"SELECT * FROM site_log{where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [page_size, (page - 1) * page_size],
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows], total
+
+
 async def prune_site_log(keep: int = 5000) -> int:
     """Удаляет записи site_log сверх ``keep``; возвращает число удалённых."""
     async with _db() as db:
@@ -1272,17 +1297,25 @@ async def count_users(search: str = "") -> int:
 
 
 async def list_users_page(search: str, limit: int, offset: int) -> list[dict]:
+    """Страница пользователей с числом подписок (orders_count) для админ-таблицы.
+
+    orders_count — число не-удалённых заказов пользователя (подписок и ключей).
+    """
     async with _db() as db:
         db.row_factory = aiosqlite.Row
+        select = (
+            "SELECT u.*, "
+            "(SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.status != 'deleted') "
+            "AS orders_count FROM users u"
+        )
         if search:
             cur = await db.execute(
-                """SELECT * FROM users WHERE email LIKE ?
-                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                select + " WHERE u.email LIKE ? ORDER BY u.created_at DESC LIMIT ? OFFSET ?",
                 (f"%{search}%", limit, offset),
             )
         else:
             cur = await db.execute(
-                "SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                select + " ORDER BY u.created_at DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             )
         rows = await cur.fetchall()

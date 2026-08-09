@@ -186,6 +186,11 @@ class Settings(BaseSettings):
     auth_lockout_after: int = 5
     auth_lockout_minutes: int = 15
 
+    # Rate-limit на /admin/* (X-Admin-Key): число неверных попыток с одного IP
+    # до временной блокировки. Защита от перебора админ-ключа.
+    admin_lockout_after: int = 10
+    admin_lockout_minutes: int = 15
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v):

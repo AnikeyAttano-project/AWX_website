@@ -25,11 +25,12 @@ Endpoints:
 import hmac
 import logging
 import json
+from collections import defaultdict
 from typing import Optional
 from datetime import datetime, timedelta
 
 import aiosqlite
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from config import settings
@@ -38,22 +39,51 @@ from database import (
     get_order, save_settings_value,
     set_user_blocked, count_users, list_users_page, get_user_by_id,
     get_user_subscriptions, mark_order_deleted, set_devices_admin_addon,
-    add_site_log, get_site_logs,
+    add_site_log, get_site_logs, get_site_logs_filtered,
     create_promo_code, list_promo_codes, delete_promo_code, toggle_promo_code,
     get_analytics_funnel, get_analytics_by_tariff, get_analytics_anomalies,
 )
 from xui_client import _parse_inbound_ids
+from shared_state import get_real_ip
 
 logger = logging.getLogger(__name__)
 
 
 # -- Authentication --
 
-async def require_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")):
+# Локаут на подбор X-Admin-Key: ip -> [datetime неверных попыток].
+# Счётчик сбрасывается при успешной авторизации с этого IP.
+_admin_failed = defaultdict(list)
+
+
+def _admin_failed_count(ip: str) -> int:
+    cutoff = datetime.now() - timedelta(minutes=settings.admin_lockout_minutes)
+    recent = [t for t in _admin_failed[ip] if t > cutoff]
+    _admin_failed[ip] = recent
+    return len(recent)
+
+
+async def require_admin(
+    request: Request,
+    x_admin_key: str = Header(default="", alias="X-Admin-Key"),
+):
     if not settings.admin_api_key:
         raise HTTPException(503, "ADMIN_API_KEY is not configured")
+    ip = get_real_ip(request)
+    if _admin_failed_count(ip) >= settings.admin_lockout_after:
+        raise HTTPException(
+            429, "Too many failed admin attempts. Try again in a few minutes."
+        )
     if not x_admin_key or not hmac.compare_digest(x_admin_key, settings.admin_api_key):
+        _admin_failed[ip].append(datetime.now())
+        # Слишком много забытых ключей — чистим старые записи, чтобы не копить память
+        if len(_admin_failed) > 5000:
+            for old_ip, stamps in list(_admin_failed.items()):
+                if not stamps or _admin_failed_count(old_ip) == 0:
+                    _admin_failed.pop(old_ip, None)
         raise HTTPException(401, "Invalid or missing X-Admin-Key header")
+    # Успешная авторизация — снимаем локаут с этого IP
+    _admin_failed.pop(ip, None)
 
 
 admin_router = APIRouter(
@@ -692,6 +722,8 @@ async def update_tariffs(req: TariffUpdateRequest):
     settings.tariffs = tariffs_dict
     await save_settings_value("tariffs", tariffs_dict)
     logger.info("Admin updated tariffs: %s", list(tariffs_dict.keys()))
+    await add_site_log("settings_tariffs", actor="admin",
+                       details=", ".join(tariffs_dict.keys()))
     return {"ok": True, "tariffs": tariffs_dict}
 
 
@@ -710,6 +742,8 @@ async def update_tariff_groups(req: TariffGroupsRequest):
     settings.tariff_groups = groups_dict
     await save_settings_value("tariff_groups", groups_dict)
     logger.info("Admin updated tariff groups: %s", list(groups_dict.keys()))
+    await add_site_log("settings_tariff_groups", actor="admin",
+                       details=", ".join(groups_dict.keys()))
     return {"ok": True, "tariff_groups": groups_dict}
 
 
@@ -732,6 +766,8 @@ async def update_branding(req: BrandingRequest):
     settings.branding = branding
     await save_settings_value("branding", branding)
     logger.info("Admin updated branding: site_name=%s", branding["site_name"])
+    await add_site_log("settings_branding", actor="admin",
+                       details=f"site_name={branding['site_name']}")
     return {"ok": True, "branding": branding}
 
 
@@ -741,6 +777,8 @@ async def update_inbounds(req: InboundsRequest):
     settings.available_inbounds = req.inbounds
     await save_settings_value("available_inbounds", req.inbounds)
     logger.info("Admin updated inbounds: %s", req.inbounds)
+    await add_site_log("settings_inbounds", actor="admin",
+                       details=", ".join(str(i) for i in req.inbounds))
     return {"ok": True, "available_inbounds": req.inbounds}
 
 
@@ -763,6 +801,8 @@ async def update_payment(req: PaymentSettingsRequest):
     }
     await save_settings_value("payment", payment_cfg)
     logger.info("Admin updated payment provider: %s", settings.payment_provider)
+    await add_site_log("settings_payment", actor="admin",
+                       details=settings.payment_provider)
     return {"ok": True, "payment": {"provider": settings.payment_provider}}
 
 
@@ -795,6 +835,7 @@ async def export_settings():
         "referral": await _referral_settings_dict(),
         "promo_codes": await list_promo_codes(),
     }
+    await add_site_log("settings_export", actor="admin", details="backup downloaded")
     return data
 
 
@@ -848,6 +889,13 @@ async def import_settings(req: ImportSettingsRequest):
             "gb": int(t.get("gb", settings.trial_gb)),
             "devices": int(t.get("devices", settings.trial_devices)),
         }
+        # Валидация диапазонов при импорте (как в TrialSettingsRequest)
+        if not (1 <= trial_val["days"] <= 365):
+            raise HTTPException(400, f"trial.days вне диапазона (1..365): {trial_val['days']}")
+        if trial_val["gb"] < 0:
+            raise HTTPException(400, f"trial.gb не может быть отрицательным: {trial_val['gb']}")
+        if not (1 <= trial_val["devices"] <= 20):
+            raise HTTPException(400, f"trial.devices вне диапазона (1..20): {trial_val['devices']}")
         settings.trial_enabled = trial_val["enabled"]
         settings.trial_days = trial_val["days"]
         settings.trial_gb = trial_val["gb"]
@@ -873,25 +921,42 @@ async def import_settings(req: ImportSettingsRequest):
         imported.append("referral")
 
     if req.promo_codes is not None:
-        added = 0
-        for p in req.promo_codes:
+        # Сначала валидируем всю пачку — битый импорт не должен частично примениться.
+        parsed: list[dict] = []
+        errors: list[str] = []
+        for i, p in enumerate(req.promo_codes, start=1):
             code = str(p.get("code", "")).strip().upper()
             if not code:
+                errors.append(f"#{i}: пустой code")
                 continue
             kind = p.get("kind", "percent")
-            value = float(p.get("value", 0))
-            if kind not in ("percent", "fixed") or value <= 0:
-                continue
             try:
-                await create_promo_code(
-                    code=code, kind=kind, value=value,
-                    max_uses=int(p.get("max_uses", 0)),
-                    expires_at=p.get("expires_at") or None,
-                    tariff_group=p.get("tariff_group") or None,
-                )
+                value = float(p.get("value", 0))
+            except (TypeError, ValueError):
+                value = 0
+            if kind not in ("percent", "fixed"):
+                errors.append(f"{code}: kind должен быть 'percent' или 'fixed'")
+                continue
+            if value <= 0 or (kind == "percent" and value > 100):
+                errors.append(f"{code}: value вне диапазона ({value})")
+                continue
+            parsed.append({
+                "code": code, "kind": kind, "value": value,
+                "max_uses": int(p.get("max_uses", 0)),
+                "expires_at": p.get("expires_at") or None,
+                "tariff_group": p.get("tariff_group") or None,
+            })
+        if errors:
+            raise HTTPException(400, "Промо-коды с ошибками: " + "; ".join(errors[:10]))
+        added = 0
+        for p in parsed:
+            try:
+                await create_promo_code(**p)
                 added += 1
             except ValueError:
-                pass  # уже существует
+                errors.append(f"{p['code']}: уже существует")
+        if errors:
+            raise HTTPException(400, "Промо-коды с ошибками: " + "; ".join(errors[:10]))
         imported.append(f"promo_codes(+{added})")
 
     if not imported:
@@ -971,6 +1036,8 @@ async def update_trial(req: TrialSettingsRequest):
         "devices": req.devices,
     })
     logger.info("Admin updated trial: enabled=%s", req.enabled)
+    await add_site_log("settings_trial", actor="admin",
+                       details=f"enabled={req.enabled}, days={req.days}, gb={req.gb}, devices={req.devices}")
     return {"ok": True}
 
 
@@ -992,6 +1059,8 @@ async def update_referral(req: ReferralSettingsRequest):
         await db.commit()
 
     logger.info("Admin updated referral: enabled=%s, percent=%s", req.enabled, req.bonus_percent)
+    await add_site_log("settings_referral", actor="admin",
+                       details=f"enabled={req.enabled}, bonus_percent={req.bonus_percent}")
     return {"ok": True}
 
 
@@ -1000,6 +1069,7 @@ async def update_demo(enabled: bool = Query(...)):
     settings.demo_mode = enabled
     await save_settings_value("demo_mode", {"enabled": enabled})
     logger.info("Admin updated demo_mode: %s", enabled)
+    await add_site_log("settings_demo", actor="admin", details=str(enabled))
     return {"ok": True, "demo_mode": enabled}
 
 
@@ -1008,6 +1078,7 @@ async def admin_cleanup():
     """Ручной запуск очистки устаревших записей (>14 дней после окончания)."""
     from shared_state import cleanup_expired_subscriptions
     await cleanup_expired_subscriptions()
+    await add_site_log("admin_cleanup", actor="admin", details="manual cleanup")
     return {"ok": True, "message": "Cleanup completed. Check server logs for details."}
 
 
@@ -1021,10 +1092,19 @@ async def legacy_update_tariffs(req: TariffUpdateRequest):
 # -- Общий лог действий сайта --
 
 @admin_router.get("/logs")
-async def admin_logs(limit: int = Query(200, ge=10, le=5000)):
-    """Последние N записей общего лога действий сайта (свежие сверху)."""
-    items = await get_site_logs(limit)
-    return {"items": items, "total": len(items), "limit": limit}
+async def admin_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=5000),
+    action: str = Query("", max_length=100),
+    actor: str = Query("", max_length=100),
+):
+    """Общий лог с фильтрами по action/actor и пагинацией (свежие сверху)."""
+    items, total = await get_site_logs_filtered(
+        page=page, page_size=page_size,
+        action=action.strip() or None,
+        actor=actor.strip() or None,
+    )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @admin_router.get("/logs/download")

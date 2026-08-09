@@ -461,6 +461,8 @@
             <option value="1000">Последние 1000</option>
           </select>
         </div>
+        <input type="text" id="logs-action" placeholder="Действие (settings_trial...)" oninput="debouncedLoadLogs()" style="min-width:180px;">
+        <input type="text" id="logs-actor" placeholder="Актор (admin...)" oninput="debouncedLoadLogs()" style="min-width:110px;">
         <button class="btn btn-outline btn-sm" onclick="loadLogs()">Обновить</button>
         <button class="btn btn-dark btn-sm" onclick="downloadLogs()">Скачать лог</button>
         <span id="logs-total" style="font-size:13px;color:var(--text-3);"></span>
@@ -498,10 +500,54 @@ function shortDate(s){ if(!s) return '—'; const d=new Date(s.includes(' ')?s.r
 function show(id){ document.getElementById(id).classList.remove('hidden'); }
 function hide(id){ document.getElementById(id).classList.add('hidden'); }
 
+// ====== ОБЩИЕ СОСТОЯНИЯ: спиннер / пустое состояние / подтверждение ======
+function spinner(msg=''){
+  return `<div style="text-align:center;padding:48px;">
+    <div style="width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;"></div>
+    ${msg?`<p style="color:var(--text-3);font-size:13px;margin:0;">${esc(msg)}</p>`:''}
+  </div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+}
+function emptyRow(colspan, msg='Нет данных'){
+  return `<tr><td colspan="${colspan}" class="tbl-empty">${esc(msg)}</td></tr>`;
+}
+// Общая модалка подтверждения. Возвращает Promise<boolean>; resolve(true) по кнопке,
+// Отмена/крестик/оверлей — promise остаётся незакрытым (вызывающий просто не продолжит).
+function confirmAction(title, desc, {danger=true, confirmText='Подтвердить'}={}){
+  return new Promise(resolve=>{
+    showModal(`
+      <h2>${esc(title)}</h2>
+      <p style="font-size:14px;color:var(--text-2);margin-bottom:20px;">${desc}</p>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+        <button class="btn ${danger?'btn-danger':'btn-dark'}" id="confirm-action-btn">${esc(confirmText)}</button>
+      </div>
+    `);
+    const btn = document.getElementById('confirm-action-btn');
+    const onClick = () => { closeModal(); btn.removeEventListener('click', onClick); resolve(true); };
+    btn.addEventListener('click', onClick);
+  });
+}
+
 async function api(path, opts={}){
   const h = Object.assign({'X-Admin-Key':adminKey}, opts.headers||{});
   const r = await fetch(API_BASE + path, Object.assign({}, opts, {headers:h}));
   if(!r.ok){
+    // 401 уже внутри приложения = ключ невалиден/истёк → сброс сессии на логин.
+    // На самом экране логина (проверка ключа при входе) редирект не делаем —
+    // там 401 просто покажет ошибку ввода.
+    if(r.status===401){
+      const loginScreen = document.getElementById('login-screen');
+      const inApp = loginScreen && loginScreen.classList.contains('hidden');
+      if(inApp){
+        adminKey='';
+        localStorage.removeItem(KEY_STORAGE);
+        hide('app');
+        show('login-screen');
+        throw new Error('Сессия истекла — войдите заново');
+      }
+      const d = await r.json().catch(()=>({}));
+      throw new Error(d.detail || 'Error '+r.status);
+    }
     const d = await r.json().catch(()=>({}));
     throw new Error(d.detail || 'Error '+r.status);
   }
@@ -625,7 +671,7 @@ async function loadDashboard(){
       <td>${money(o.amount)}</td>
       <td>${shortDate(o.created_at)}</td>
     </tr>`).join('');
-    document.getElementById('dash-recent').innerHTML = rows || '<tr><td colspan="6" class="tbl-empty">Нет заказов</td></tr>';
+    document.getElementById('dash-recent').innerHTML = rows || emptyRow(6, 'Нет заказов');
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
@@ -657,13 +703,13 @@ async function loadUsers(page=1){
         </td>
       </tr>`;
     }).join('');
-    document.getElementById('users-tbody').innerHTML = rows || '<tr><td colspan="5" class="tbl-empty">Пользователей нет</td></tr>';
+    document.getElementById('users-tbody').innerHTML = rows || emptyRow(5, 'Пользователей нет');
     renderPager('users-pager', d, loadUsers);
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
 async function viewUser(id){
-  showModal('<div style="text-align:center;padding:24px;"><div style="width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;"></div><p style="color:var(--text-3);font-size:13px;">Загрузка...</p></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>');
+  showModal(spinner('Загрузка...'));
   try{
     const u = await api('/admin/users/'+id);
     let subs = '';
@@ -702,6 +748,13 @@ async function viewUser(id){
 }
 
 async function toggleBlock(id, block){
+  const ok = await confirmAction(
+    block ? 'Заблокировать пользователя' : 'Разблокировать пользователя',
+    block
+      ? 'Пользователь не сможет войти и использовать ключи. Подтвердите блокировку.'
+      : 'Пользователю будет восстановлен доступ к аккаунту и ключам.'
+  );
+  if(!ok) return;
   try{
     await api(`/admin/users/${id}/${block?'block':'unblock'}`, {method:'POST'});
     toast(block?'Пользователь заблокирован':'Пользователь разблокирован');
@@ -749,7 +802,7 @@ async function loadKeys(page=1){
         </td>
       </tr>`;
     }).join('');
-    document.getElementById('keys-tbody').innerHTML = rows || '<tr><td colspan="7" class="tbl-empty">Ключей нет</td></tr>';
+    document.getElementById('keys-tbody').innerHTML = rows || emptyRow(7, 'Ключей нет');
     renderPager('keys-pager', d, loadKeys);
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
@@ -800,14 +853,18 @@ async function confirmSetDevices(id){
 }
 
 async function deleteKey(id){
-  if(!confirm('Удалить ключ '+id+' из панели и БД?')) return;
+  const ok = await confirmAction('Удалить ключ',
+    `Ключ <strong>${esc(id)}</strong> будет удалён из панели 3x-UI и из БД. Действие необратимо.`);
+  if(!ok) return;
   try{
     await api(`/admin/keys/${id}/delete`,{method:'POST'});
     toast('Ключ удалён');
     loadKeys(keysPage);
   }catch(e){
     if(e.message.includes('409')||e.message.includes('Panel unavailable')){
-      if(confirm('Панель недоступна. Удалить только из БД?')){
+      const okForce = await confirmAction('Удалить только из БД?',
+        'Панель 3x-UI недоступна. Ключ будет удалён только из БД (клиент в панели останется).');
+      if(okForce){
         try{
           await api(`/admin/keys/${id}/delete?force=true`,{method:'POST'});
           toast('Ключ удалён из БД (принудительно)');
@@ -821,7 +878,7 @@ async function deleteKey(id){
 // ====== STATISTICS ======
 async function loadStats(){
   const el = document.getElementById('stats-content');
-  el.innerHTML = '<div style="text-align:center;padding:48px;"><div style="width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;"></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style></div>';
+  el.innerHTML = spinner();
   try{
     const d = await api('/admin/stats');
     let html = '';
@@ -904,7 +961,7 @@ async function loadStats(){
 // ====== ANALYTICS (витрина на основе site_log) ======
 async function loadAnalytics(){
   const el = document.getElementById('analytics-content');
-  el.innerHTML = '<div style="text-align:center;padding:48px;"><div style="width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;"></div></div>';
+  el.innerHTML = spinner();
   try{
     const [funnel, byTariff, anomalies] = await Promise.all([
       api('/admin/analytics/funnel?days=7'),
@@ -989,7 +1046,7 @@ async function loadAnalytics(){
 // ====== SETTINGS ======
 async function loadSettings(){
   const el = document.getElementById('settings-content');
-  el.innerHTML = '<div style="text-align:center;padding:48px;"><div style="width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;"></div></div>';
+  el.innerHTML = spinner();
   try{
     const d = await api('/admin/settings');
     // Глобалы для редактора групп и промо (инбаунды, slug'и тарифов, id групп)
@@ -1623,10 +1680,18 @@ async function loadDebug(){
 }
 
 // ====== ЛОГИ ======
+let _logsTimer=null;
+function debouncedLoadLogs(){ clearTimeout(_logsTimer); _logsTimer=setTimeout(()=>loadLogs(), 300); }
+
 async function loadLogs(){
-  const limit = parseInt(document.getElementById('logs-limit')?.value)||200;
+  const pageSize = parseInt(document.getElementById('logs-limit')?.value)||200;
+  const action = (document.getElementById('logs-action')?.value||'').trim();
+  const actor = (document.getElementById('logs-actor')?.value||'').trim();
+  const q = new URLSearchParams({page_size: pageSize});
+  if(action) q.set('action', action);
+  if(actor) q.set('actor', actor);
   try{
-    const d = await api('/admin/logs?limit='+limit);
+    const d = await api('/admin/logs?'+q.toString());
     document.getElementById('logs-total').textContent = `${d.total} записей`;
     const rows = d.items.map(r => {
       const lvl = String(r.level||'info').toLowerCase();
@@ -1639,7 +1704,7 @@ async function loadLogs(){
         <td style="font-size:12px;color:var(--text-2);word-break:break-all;">${esc(r.details||'')}</td>
       </tr>`;
     }).join('');
-    document.getElementById('logs-tbody').innerHTML = rows || '<tr><td colspan="5" class="tbl-empty">Лог пуст</td></tr>';
+    document.getElementById('logs-tbody').innerHTML = rows || emptyRow(5, 'Лог пуст');
   }catch(e){ toast('Ошибка: '+e.message, 'error'); }
 }
 
@@ -1707,7 +1772,7 @@ function renderPromoTable(items){
         <button class="btn btn-danger btn-sm" onclick="deletePromo(${p.id})">Удалить</button>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="7" class="tbl-empty">Промокодов пока нет</td></tr>';
+  }).join('') || emptyRow(7, 'Промокодов пока нет');
 }
 
 async function createPromo(){
@@ -1736,7 +1801,8 @@ async function togglePromo(id){
 }
 
 async function deletePromo(id){
-  if(!confirm('Удалить промокод?')) return;
+  const ok = await confirmAction('Удалить промокод', 'Промокод будет удалён безвозвратно.');
+  if(!ok) return;
   try{
     await api('/admin/promo/'+id+'/delete', {method:'POST'});
     toast('Промокод удалён');

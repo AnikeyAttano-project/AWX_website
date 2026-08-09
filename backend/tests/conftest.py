@@ -42,6 +42,7 @@ import main
 import shared_state
 import payment_lifecycle
 import auth as auth_module
+import admin as admin_module
 from database import _db, init_db
 from payment_providers import PaymentError
 
@@ -174,6 +175,7 @@ def _clean_db():
     # на общий IP "testclient" и мешают последующим тестам (429).
     shared_state.rate_limit_storage.clear()
     auth_module._failed_logins.clear()
+    admin_module._admin_failed.clear()
 
 
 async def _truncate_all():
